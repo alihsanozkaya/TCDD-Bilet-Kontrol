@@ -14,7 +14,16 @@ Bu proje, [Playwright](https://playwright.dev/) kullanarak TCDD'nin bilet kontro
    ```bash
    git clone https://github.com/kullaniciadi/TCDD-Bilet-Kontrol.git
    cd TCDD-Bilet-Kontrol
+   ```
 
-2. npm install
+2. ```bash
+   npm install
+   ```
 
-3. npx playwright install || npx playwright install chromium
+3. ```bash
+      npx playwright install
+   ```
+   veya
+   ```bash
+   npx playwright install chromium
+   ```
