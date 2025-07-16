@@ -16,12 +16,14 @@ Bu proje, [Playwright](https://playwright.dev/) kullanarak TCDD'nin bilet kontro
    cd TCDD-Bilet-Kontrol
    ```
 
-2. ```bash
+2. 
+   ```bash
    npm install
    ```
 
-3. ```bash
-      npx playwright install
+3. 
+   ```bash
+   npx playwright install
    ```
    veya
    ```bash
