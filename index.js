@@ -1,4 +1,4 @@
-require('dotenv').config();
+require("dotenv").config();
 const { chromium } = require("playwright");
 const { Client } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
@@ -6,6 +6,9 @@ const qrcode = require("qrcode-terminal");
 const DEPARTURE_STATION = "566";
 const ARRIVAL_STATION = "93";
 const DEPARTURE_DATE = "25 07 2025";
+
+const MIN_DELAY_MS = 10000;
+const MAX_DELAY_MS = 30000;
 
 const TARGET_WHATSAPP_NUMBER = process.env.TARGET_WHATSAPP_NUMBER;
 
@@ -112,7 +115,10 @@ async function startCheckingLoop() {
       console.error("Hata:", error);
     }
     if (!stopChecking) {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const delayMs =
+        Math.floor(Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS)) +
+        MIN_DELAY_MS;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
   process.exit(0);
