@@ -88,8 +88,12 @@ async function checkEconomyClass(page) {
 }
 
 async function checkTrainTickets() {
-  const browser = await chromium.launch({ headless: false });
-  const page = await browser.newPage();
+  const browser = await chromium.launch({
+    headless: false,
+    args: ["--start-maximized"],
+  });
+  const context = await browser.newContext({ viewport: null });
+  const page = await context.newPage();
 
   await page.goto("https://ebilet.tcddtasimacilik.gov.tr/", {
     waitUntil: "load",
