@@ -7,10 +7,7 @@ const stopProgressFlags = new Map();
 
 async function launchBrowser() {
   if (!browser) {
-    browser = await chromium.launch({
-      headless: false,
-      args: ["--start-maximized"],
-    });
+    browser = await chromium.launch({ headless: false, args: ["--start-maximized"] });
     const context = await browser.newContext({ viewport: null });
     page = await context.newPage();
   }
@@ -24,95 +21,53 @@ async function closeBrowser() {
   }
 }
 
+function shouldStop(chatId) {
+  return stopProgressFlags.get(chatId);
+}
+
+async function clickWithCheck(selector, chatId, timeout = 1000) {
+  if (shouldStop(chatId)) return false;
+  await page.waitForSelector(selector, { timeout });
+  await page.click(selector);
+  await page.waitForTimeout(500);
+  return true;
+}
+
 async function getExpeditionList(from, to, date, chatId) {
   stopProgressFlags.set(chatId, false);
   await launchBrowser();
-  
-  await page.goto("https://ebilet.tcddtasimacilik.gov.tr/", {
-    waitUntil: "load",
-  });
+  await page.goto("https://ebilet.tcddtasimacilik.gov.tr/", { waitUntil: "load" });
 
-  if (stopProgressFlags.get(chatId)) {
-    await closeBrowser();
-    return null;
-  }
-  
-  await page.waitForSelector("#fromTrainInput", { timeout: 1000 });
-  await page.click("#fromTrainInput");
-  await page.waitForTimeout(500);
+  const actions = [
+    () => clickWithCheck("#fromTrainInput", chatId),
+    () => clickWithCheck(`#gidis-${from}`, chatId),
+    () => clickWithCheck("#toTrainInput", chatId),
+    () => clickWithCheck(`#donus-${to}`, chatId),
+    () => clickWithCheck(".departureDate", chatId),
+    () => clickWithCheck(`[id="${date}"]`, chatId),
+    () => clickWithCheck("#searchSeferButton", chatId),
+  ];
 
-  if (stopProgressFlags.get(chatId)) {
-    await closeBrowser();
-    return null;
-  }
-
-  await page.waitForSelector(`#gidis-${from}`, { timeout: 1000 });
-  await page.click(`#gidis-${from}`);
-
-  if (stopProgressFlags.get(chatId)) {
-    await closeBrowser();
-    return null;
+  for (const action of actions) {
+    const result = await action();
+    if (!result) {
+      await closeBrowser();
+      return null;
+    }
   }
 
-  await page.waitForSelector("#toTrainInput", { timeout: 1000 });
-  await page.click("#toTrainInput");
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(5000);
 
-  if (stopProgressFlags.get(chatId)) {
-    await closeBrowser();
-    return null;
-  }
-
-  await page.waitForSelector(`#donus-${to}`, { timeout: 1000 });
-  await page.click(`#donus-${to}`);
-
-  if (stopProgressFlags.get(chatId)) {
-    await closeBrowser();
-    return null;
-  }
-
-  await page.waitForSelector(".departureDate", { timeout: 1000 });
-  await page.click(".departureDate");
-  await page.waitForTimeout(500);
-
-  if (stopProgressFlags.get(chatId)) {
-    await closeBrowser();
-    return null;
-  }
-
-  await page.waitForSelector(`[id="${date}"]`, { timeout: 1000 });
-  await page.click(`[id="${date}"]`);
-  await page.waitForTimeout(500);
-
-  if (stopProgressFlags.get(chatId)) {
-    await closeBrowser();
-    return null;
-  }
-
-  await page.waitForSelector("#searchSeferButton", { timeout: 1000 });
-  await page.click("#searchSeferButton");
-  await page.waitForTimeout(2000);
-
-  if (stopProgressFlags.get(chatId)) {
+  if (shouldStop(chatId)) {
     await closeBrowser();
     return null;
   }
 
   await page.waitForSelector(".seferInformationArea", { timeout: 15000 });
 
-  if (stopProgressFlags.get(chatId)) {
-    await closeBrowser();
-    return null;
-  }
-
   const expeditionButtons = await page.$$(`button[id^="gidis"][id$="btn"]`);
-
-  if (stopProgressFlags.get(chatId)) {
-    await closeBrowser();
-    return null;
-  }
-
   const expeditionList = [];
+
   for (const btn of expeditionButtons) {
     const id = await btn.getAttribute("id");
     const text = await btn.innerText();
@@ -127,47 +82,27 @@ async function closeListBrowser() {
 }
 
 async function checkSelectedExpedition(from, to, date, expeditionId) {
-  const browserLocal = await chromium.launch({
-    headless: false,
-    args: ["--start-maximized"],
-  });
+  const browserLocal = await chromium.launch({ headless: false, args: ["--start-maximized"] });
   const context = await browserLocal.newContext({ viewport: null });
   const pageLocal = await context.newPage();
 
   try {
-    await pageLocal.goto("https://ebilet.tcddtasimacilik.gov.tr/", {
-      waitUntil: "load",
-    });
+    await pageLocal.goto("https://ebilet.tcddtasimacilik.gov.tr/", { waitUntil: "load" });
 
-    await pageLocal.waitForSelector("#fromTrainInput", { timeout: 1000 });
-    await pageLocal.click("#fromTrainInput");
-    await pageLocal.waitForTimeout(500);
+    const steps = [
+      "#fromTrainInput", `#gidis-${from}`,
+      "#toTrainInput", `#donus-${to}`,
+      ".departureDate", `[id="${date}"]`,
+      "#searchSeferButton"
+    ];
 
-    await pageLocal.waitForSelector(`#gidis-${from}`, { timeout: 1000 });
-    await pageLocal.click(`#gidis-${from}`);
-
-    await pageLocal.waitForSelector("#toTrainInput", { timeout: 1000 });
-    await pageLocal.click("#toTrainInput");
-    await pageLocal.waitForTimeout(500);
-
-    await pageLocal.waitForSelector(`#donus-${to}`, { timeout: 1000 });
-    await pageLocal.click(`#donus-${to}`);
-
-    await pageLocal.waitForSelector(".departureDate", { timeout: 1000 });
-    await pageLocal.click(".departureDate");
-    await pageLocal.waitForTimeout(500);
-
-    await pageLocal.waitForSelector(`[id="${date}"]`, { timeout: 1000 });
-    await pageLocal.click(`[id="${date}"]`);
-    await pageLocal.waitForTimeout(500);
-
-    await pageLocal.waitForSelector("#searchSeferButton", { timeout: 1000 });
-    await pageLocal.click("#searchSeferButton");
-    await pageLocal.waitForTimeout(2000);
+    for (const selector of steps) {
+      await pageLocal.waitForSelector(selector, { timeout: 1000 });
+      await pageLocal.click(selector);
+      await pageLocal.waitForTimeout(500);
+    }
 
     await pageLocal.waitForSelector(".seferInformationArea", { timeout: 15000 });
-
-    await pageLocal.waitForSelector(`#${expeditionId}`, { timeout: 1000 });
     await pageLocal.click(`#${expeditionId}`);
     await pageLocal.waitForTimeout(1000);
 
@@ -198,7 +133,6 @@ async function startCheckingLoop(from, to, date, expeditionId, callbacks = {}, c
   try {
     while (!stopCheckingFlags.get(chatId)) {
       const empty = await checkSelectedExpedition(from, to, date, expeditionId);
-
       if (stopCheckingFlags.get(chatId)) break;
 
       if (empty) {
@@ -221,11 +155,11 @@ async function startCheckingLoop(from, to, date, expeditionId, callbacks = {}, c
 
 function stopCheckingLoop(chatId) {
   stopCheckingFlags.set(chatId, true);
-  stopProgressFlags.set(chatId, true)
+  stopProgressFlags.set(chatId, true);
 }
 
-function stopProgress(chatId) {
-  stopProgressFlags.set(chatId, true)
+function setStopFlag(chatId) {
+  stopProgressFlags.set(chatId, true);
 }
 
 module.exports = {
@@ -233,5 +167,5 @@ module.exports = {
   closeListBrowser,
   startCheckingLoop,
   stopCheckingLoop,
-  stopProgress
+  setStopFlag
 };

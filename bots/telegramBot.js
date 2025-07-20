@@ -1,28 +1,26 @@
 const TelegramBot = require("node-telegram-bot-api");
 const ticketChecker = require("../core/ticketChecker");
+const formatter = require("../utils/formatter");
+const stateManager = require("../core/stateManager");
 const { validStations, stationListText } = require("../data/stations");
 
 function startTelegramBot() {
   const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
-  const userState = {};
-  const inProgressUsers = new Set();
-  const activeCheckers = new Map();
-
   bot.onText(/\/biletbul/, async (msg) => {
     const chatId = msg.chat.id;
 
-    if (inProgressUsers.has(chatId) || activeCheckers.get(chatId)) {
+    if (stateManager.isChecking(chatId) || stateManager.isInProgress(chatId)) {
       await bot.sendMessage(
         chatId,
-        `⚠️ Zaten bir işlem devam ediyor. 
-Önce /durdur komutuyla iptal edin.`
+        "Zaten bir işlem veya kontrol çalışıyor. Önce /durdur ile durdurabilirsiniz."
       );
       return;
     }
 
-    inProgressUsers.add(chatId);
-    userState[chatId] = { step: "from" };
+    stateManager.startProgress(chatId);
+    stateManager.setState(chatId, { step: "from" });
+
     await bot.sendMessage(
       chatId,
       "Kalkış istasyon kodunu girin:\n" + stationListText()
@@ -32,20 +30,20 @@ function startTelegramBot() {
   bot.onText(/\/durdur/, async (msg) => {
     const chatId = msg.chat.id;
 
-    const isLoopActive = activeCheckers.get(chatId) === true;
-    const isInProgress = inProgressUsers.has(chatId);
-
-    if (isLoopActive) {
-      ticketChecker.stopCheckingLoop(chatId);
-      activeCheckers.set(chatId, false);
+    if (stateManager.isChecking(chatId)) {
       await bot.sendMessage(chatId, "🛑 Sefer kontrolü durduruluyor...");
+      ticketChecker.stopCheckingLoop(chatId);
+      stateManager.clearUserState(chatId);
+      stateManager.stopChecker(chatId);
+      stateManager.deleteState(chatId);
+      await bot.sendMessage(chatId, "✅ Kontrol durduruldu.");
       return;
     }
 
-    if (isInProgress) {
-      ticketChecker.stopProgress(chatId);
-      inProgressUsers.delete(chatId);
-      delete userState[chatId];
+    if (stateManager.isInProgress(chatId)) {
+      ticketChecker.setStopFlag(chatId);
+      stateManager.clearUserState(chatId);
+      stateManager.deleteState(chatId);
       await bot.sendMessage(chatId, "🛑 İşlem iptal edildi.");
       return;
     }
@@ -57,9 +55,10 @@ function startTelegramBot() {
     const chatId = msg.chat.id;
     const text = msg.text ? msg.text.trim() : "";
 
-    if (!userState[chatId] || text.startsWith("/")) return;
+    if (!stateManager.getState(chatId) || text.startsWith("/")) return;
 
-    const state = userState[chatId];
+    const state = stateManager.getState(chatId);
+
     try {
       if (state.step === "from") {
         if (!validStations[text]) {
@@ -71,6 +70,7 @@ function startTelegramBot() {
         }
         state.from = text;
         state.step = "to";
+        stateManager.setState(chatId, state);
         await bot.sendMessage(
           chatId,
           "Varış istasyon kodunu girin:\n" + stationListText()
@@ -82,6 +82,7 @@ function startTelegramBot() {
         }
         state.to = text;
         state.step = "date";
+        stateManager.setState(chatId, state);
         await bot.sendMessage(chatId, "Tarih girin (gg aa yyyy):");
       } else if (state.step === "date") {
         if (!/^\d{2} \d{2} \d{4}$/.test(text)) {
@@ -105,14 +106,11 @@ function startTelegramBot() {
           return;
         }
 
-        const currentMonth = today.getMonth();
-        const currentYear = today.getFullYear();
-
-        let maxMonth = currentMonth + 2;
-        let maxYear = currentYear;
+        let maxMonth = today.getMonth() + 2;
+        let maxYear = today.getFullYear();
 
         if (maxMonth > 11) {
-          maxMonth = maxMonth % 12;
+          maxMonth %= 12;
           maxYear += 1;
         }
 
@@ -132,6 +130,7 @@ function startTelegramBot() {
         }
 
         state.date = text;
+        stateManager.setState(chatId, state);
 
         await bot.sendMessage(
           chatId,
@@ -146,57 +145,30 @@ function startTelegramBot() {
           state.date,
           chatId
         );
-        console.log(expeditionList);
+
         if (!expeditionList) {
-          inProgressUsers.delete(chatId);
-          delete userState[chatId];
-          await ticketChecker.closeListBrowser();
+          stateManager.deleteState(chatId);
           return;
         }
 
         if (expeditionList.length === 0) {
-          inProgressUsers.delete(chatId);
-          delete userState[chatId];
-          await bot.sendMessage(chatId, "⚠️ Sefer bulunamadı.");
+          await bot.sendMessage(
+            chatId,
+            "⚠️ Bu tarih ve güzergah için sefer bulunamadı."
+          );
+          stateManager.deleteState(chatId);
           await ticketChecker.closeListBrowser();
           return;
         }
 
         let replyText = "📅 Sefer listesinden seçim yapınız:\n\n";
-
-        expeditionList?.forEach((ex, i) => {
-          const lines = ex.text
-            .split("\n")
-            .map((line) => line.trim())
-            .filter(Boolean);
-
-          const trainLine = lines[0] || "🚄 Tren Bilgisi Bulunamadı";
-          const departureStation = lines[2] || "Kalkış ?";
-          const duration = lines[3] || "Süre ?";
-          const arrivalStation = lines[4] || "Varış ?";
-          const departureTime = lines[5] || "Kalkış Saati ?";
-          const arrivalTime = lines[6] || "Varış Saati ?";
-          const priceLine = lines.find((line) => line.includes("₺")) || "₺ ???";
-          const availableSeatMatch = ex.text.match(/\((\d+)\)$/);
-          const availableSeats = availableSeatMatch
-            ? availableSeatMatch[1]
-            : "?";
-
-          const emoji = trainLine.startsWith("YHT")
-            ? "🚅"
-            : trainLine.startsWith("ANAHAT")
-            ? "🚞"
-            : "🚄";
-
-          replyText += `${i + 1}. ${emoji} ${trainLine}\n`;
-          replyText += `  🚉 ${departureStation} → ${arrivalStation}\n`;
-          replyText += `  🕕 ${departureTime} - ${arrivalTime} (${duration})\n`;
-          // replyText += `  💺 Boş Koltuk: ${availableSeats}\n`;
-          replyText += `  💰 ${priceLine}\n\n`;
-        });
+        replyText += expeditionList
+          .map((exp, i) => formatter.formatExpeditionListItem(exp, i))
+          .join("\n");
 
         state.expeditionList = expeditionList;
         state.step = "expedition";
+        stateManager.setState(chatId, state);
 
         await bot.sendMessage(
           chatId,
@@ -218,45 +190,13 @@ function startTelegramBot() {
 
         const selectedExpedition = state.expeditionList[idx - 1];
 
-        const lines = selectedExpedition.text
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean);
+        await bot.sendMessage(
+          chatId,
+          formatter.formatSelectedExpedition(selectedExpedition)
+        );
 
-        const trainLine = lines[0] || "🚄 Tren Bilgisi Bulunamadı";
-        const departureStation = lines[2] || "Kalkış ?";
-        const duration = lines[3] || "Süre ?";
-        const arrivalStation = lines[4] || "Varış ?";
-        const departureTime = lines[5] || "Kalkış Saati ?";
-        const arrivalTime = lines[6] || "Varış Saati ?";
-        const date = lines[7] || "Tarih ?";
-        const priceLine = lines.find((line) => line.includes("₺")) || "₺ ???";
-        const availableSeatMatch = selectedExpedition.text.match(/\((\d+)\)$/);
-        const availableSeats = availableSeatMatch ? availableSeatMatch[1] : "?";
-
-        const emoji = trainLine.startsWith("YHT")
-          ? "🚅"
-          : trainLine.startsWith("ANAHAT")
-          ? "🚞"
-          : "🚄";
-
-        const replyText = `
-✅ Seçilen Sefer:
-
-${emoji} ${trainLine}
-
-  🚉 ${departureStation} → ${arrivalStation}
-  🕕 ${departureTime} - ${arrivalTime} (${duration})
-  📅 ${date}
-  💰 ${priceLine}
-
-📡 Kontrol başlatılıyor...
-`;
-
-        await bot.sendMessage(chatId, replyText.trim());
-
-        activeCheckers.set(chatId, true);
-        delete userState[chatId];
+        stateManager.startChecker(chatId);
+        stateManager.deleteState(chatId);
 
         await ticketChecker.closeListBrowser();
 
@@ -268,8 +208,7 @@ ${emoji} ${trainLine}
           {
             onFound: async (msg) => {
               await bot.sendMessage(chatId, msg);
-              activeCheckers.set(chatId, false);
-              inProgressUsers.delete(chatId, false);
+              stateManager.stopChecker(chatId);
             },
             onCheck: async (msg) => {
               await bot.sendMessage(chatId, msg);
@@ -280,7 +219,7 @@ ${emoji} ${trainLine}
                 chatId,
                 "❗ Kontrol sırasında hata oluştu."
               );
-              activeCheckers.set(chatId, false);
+              stateManager.stopChecker(chatId);
             },
           },
           chatId
@@ -292,8 +231,8 @@ ${emoji} ${trainLine}
         chatId,
         "❗ Bir hata oluştu, lütfen tekrar deneyin."
       );
-      delete userState[chatId];
-      activeCheckers.set(chatId, false);
+      stateManager.deleteState(chatId);
+      stateManager.stopChecker(chatId);
     }
   });
 
