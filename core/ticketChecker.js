@@ -3,6 +3,7 @@ const { chromium } = require("playwright");
 let browser = null;
 let page = null;
 const stopCheckingFlags = new Map();
+const stopProgressFlags = new Map();
 
 async function launchBrowser() {
   if (!browser) {
@@ -23,42 +24,93 @@ async function closeBrowser() {
   }
 }
 
-async function getExpeditionList(from, to, date) {
+async function getExpeditionList(from, to, date, chatId) {
+  stopProgressFlags.set(chatId, false);
   await launchBrowser();
-
+  
   await page.goto("https://ebilet.tcddtasimacilik.gov.tr/", {
     waitUntil: "load",
   });
 
+  if (stopProgressFlags.get(chatId)) {
+    await closeBrowser();
+    return null;
+  }
+  
   await page.waitForSelector("#fromTrainInput", { timeout: 1000 });
   await page.click("#fromTrainInput");
   await page.waitForTimeout(500);
 
+  if (stopProgressFlags.get(chatId)) {
+    await closeBrowser();
+    return null;
+  }
+
   await page.waitForSelector(`#gidis-${from}`, { timeout: 1000 });
   await page.click(`#gidis-${from}`);
+
+  if (stopProgressFlags.get(chatId)) {
+    await closeBrowser();
+    return null;
+  }
 
   await page.waitForSelector("#toTrainInput", { timeout: 1000 });
   await page.click("#toTrainInput");
   await page.waitForTimeout(500);
 
+  if (stopProgressFlags.get(chatId)) {
+    await closeBrowser();
+    return null;
+  }
+
   await page.waitForSelector(`#donus-${to}`, { timeout: 1000 });
   await page.click(`#donus-${to}`);
+
+  if (stopProgressFlags.get(chatId)) {
+    await closeBrowser();
+    return null;
+  }
 
   await page.waitForSelector(".departureDate", { timeout: 1000 });
   await page.click(".departureDate");
   await page.waitForTimeout(500);
 
+  if (stopProgressFlags.get(chatId)) {
+    await closeBrowser();
+    return null;
+  }
+
   await page.waitForSelector(`[id="${date}"]`, { timeout: 1000 });
   await page.click(`[id="${date}"]`);
   await page.waitForTimeout(500);
+
+  if (stopProgressFlags.get(chatId)) {
+    await closeBrowser();
+    return null;
+  }
 
   await page.waitForSelector("#searchSeferButton", { timeout: 1000 });
   await page.click("#searchSeferButton");
   await page.waitForTimeout(2000);
 
+  if (stopProgressFlags.get(chatId)) {
+    await closeBrowser();
+    return null;
+  }
+
   await page.waitForSelector(".seferInformationArea", { timeout: 15000 });
 
+  if (stopProgressFlags.get(chatId)) {
+    await closeBrowser();
+    return null;
+  }
+
   const expeditionButtons = await page.$$(`button[id^="gidis"][id$="btn"]`);
+
+  if (stopProgressFlags.get(chatId)) {
+    await closeBrowser();
+    return null;
+  }
 
   const expeditionList = [];
   for (const btn of expeditionButtons) {
@@ -163,12 +215,17 @@ async function startCheckingLoop(from, to, date, expeditionId, callbacks = {}, c
     if (callbacks.onError) await callbacks.onError(err);
   } finally {
     stopCheckingFlags.delete(chatId);
-    await closeBrowser(); // ✅ Tarayıcı her durumda kapanır
+    await closeBrowser();
   }
 }
 
 function stopCheckingLoop(chatId) {
   stopCheckingFlags.set(chatId, true);
+  stopProgressFlags.set(chatId, true)
+}
+
+function stopProgress(chatId) {
+  stopProgressFlags.set(chatId, true)
 }
 
 module.exports = {
@@ -176,4 +233,5 @@ module.exports = {
   closeListBrowser,
   startCheckingLoop,
   stopCheckingLoop,
+  stopProgress
 };

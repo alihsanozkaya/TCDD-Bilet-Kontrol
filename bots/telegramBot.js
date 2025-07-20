@@ -6,19 +6,22 @@ function startTelegramBot() {
   const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
   const userState = {};
+  const inProgressUsers = new Set();
   const activeCheckers = new Map();
 
   bot.onText(/\/biletbul/, async (msg) => {
     const chatId = msg.chat.id;
 
-    if (activeCheckers.get(chatId)) {
+    if (inProgressUsers.has(chatId) || activeCheckers.get(chatId)) {
       await bot.sendMessage(
         chatId,
-        "Zaten bir kontrol çalışıyor. Önce /durdur ile durdurabilirsiniz."
+        `⚠️ Zaten bir işlem devam ediyor. 
+Önce /durdur komutuyla iptal edin.`
       );
       return;
     }
 
+    inProgressUsers.add(chatId);
     userState[chatId] = { step: "from" };
     await bot.sendMessage(
       chatId,
@@ -30,23 +33,20 @@ function startTelegramBot() {
     const chatId = msg.chat.id;
 
     const isLoopActive = activeCheckers.get(chatId) === true;
-    const isInProgress = !!userState[chatId];
+    const isInProgress = inProgressUsers.has(chatId);
 
     if (isLoopActive) {
-      await bot.sendMessage(chatId, "🛑 Sefer kontrolü durduruluyor...");
       ticketChecker.stopCheckingLoop(chatId);
       activeCheckers.set(chatId, false);
-      delete userState[chatId];
-      await bot.sendMessage(chatId, "✅ Kontrol durduruldu.");
+      await bot.sendMessage(chatId, "🛑 Sefer kontrolü durduruluyor...");
       return;
     }
 
     if (isInProgress) {
+      ticketChecker.stopProgress(chatId);
+      inProgressUsers.delete(chatId);
       delete userState[chatId];
-      await bot.sendMessage(
-        chatId,
-        "🛑 İşlem iptal edildi. Sefer seçimi yapılmamıştı."
-      );
+      await bot.sendMessage(chatId, "🛑 İşlem iptal edildi.");
       return;
     }
 
@@ -60,7 +60,6 @@ function startTelegramBot() {
     if (!userState[chatId] || text.startsWith("/")) return;
 
     const state = userState[chatId];
-
     try {
       if (state.step === "from") {
         if (!validStations[text]) {
@@ -144,21 +143,28 @@ function startTelegramBot() {
         const expeditionList = await ticketChecker.getExpeditionList(
           state.from,
           state.to,
-          state.date
+          state.date,
+          chatId
         );
-        if (expeditionList.length === 0) {
-          await bot.sendMessage(
-            chatId,
-            "⚠️ Bu tarih ve güzergah için sefer bulunamadı."
-          );
+        console.log(expeditionList);
+        if (!expeditionList) {
+          inProgressUsers.delete(chatId);
           delete userState[chatId];
+          await ticketChecker.closeListBrowser();
+          return;
+        }
+
+        if (expeditionList.length === 0) {
+          inProgressUsers.delete(chatId);
+          delete userState[chatId];
+          await bot.sendMessage(chatId, "⚠️ Sefer bulunamadı.");
           await ticketChecker.closeListBrowser();
           return;
         }
 
         let replyText = "📅 Sefer listesinden seçim yapınız:\n\n";
 
-        expeditionList.forEach((ex, i) => {
+        expeditionList?.forEach((ex, i) => {
           const lines = ex.text
             .split("\n")
             .map((line) => line.trim())
@@ -185,7 +191,7 @@ function startTelegramBot() {
           replyText += `${i + 1}. ${emoji} ${trainLine}\n`;
           replyText += `  🚉 ${departureStation} → ${arrivalStation}\n`;
           replyText += `  🕕 ${departureTime} - ${arrivalTime} (${duration})\n`;
-          replyText += `  💺 Boş Koltuk: ${availableSeats}\n`;
+          // replyText += `  💺 Boş Koltuk: ${availableSeats}\n`;
           replyText += `  💰 ${priceLine}\n\n`;
         });
 
@@ -242,7 +248,6 @@ ${emoji} ${trainLine}
   🚉 ${departureStation} → ${arrivalStation}
   🕕 ${departureTime} - ${arrivalTime} (${duration})
   📅 ${date}
-  💺 Boş Koltuk: ${availableSeats}
   💰 ${priceLine}
 
 📡 Kontrol başlatılıyor...
@@ -264,6 +269,7 @@ ${emoji} ${trainLine}
             onFound: async (msg) => {
               await bot.sendMessage(chatId, msg);
               activeCheckers.set(chatId, false);
+              inProgressUsers.delete(chatId, false);
             },
             onCheck: async (msg) => {
               await bot.sendMessage(chatId, msg);
@@ -277,7 +283,7 @@ ${emoji} ${trainLine}
               activeCheckers.set(chatId, false);
             },
           },
-          chatId // 👈 burası önemli
+          chatId
         );
       }
     } catch (e) {
