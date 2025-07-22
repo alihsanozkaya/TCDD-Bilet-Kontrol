@@ -1,11 +1,12 @@
 const validStations = {
   "98": "Ankara",
+  "1323": "Bostancı",
   "93": "Eskişehir",
   "1135": "İzmit YHT",
   "48": "Pendik",
   "1336": "Selçuklu YHT",
   "566": "Sivas",
-  "1323": "Söğütlüçeşme"
+  "1325": "Söğütlüçeşme"
 };
 
 function stationListText() {
