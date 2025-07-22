@@ -1,8 +1,9 @@
 const TelegramBot = require("node-telegram-bot-api");
 const ticketChecker = require("../core/ticketChecker");
 const formatter = require("../utils/formatter");
-const stateManager = require("../core/stateManager");
+const stateManager = require("../utils/stateManager");
 const { validStations, stationListText } = require("../data/stations");
+const { cleanUpAfterCheck } = require("../utils/stateCleanup");
 
 function startTelegramBot() {
   const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
@@ -32,10 +33,7 @@ function startTelegramBot() {
 
     if (stateManager.isChecking(chatId)) {
       await bot.sendMessage(chatId, "🛑 Sefer kontrolü durduruluyor...");
-      ticketChecker.stopCheckingLoop(chatId);
-      stateManager.clearUserState(chatId);
-      stateManager.stopChecker(chatId);
-      stateManager.deleteState(chatId);
+      cleanUpAfterCheck(chatId);
       await bot.sendMessage(chatId, "✅ Kontrol durduruldu.");
       return;
     }
@@ -208,7 +206,7 @@ function startTelegramBot() {
           {
             onFound: async (msg) => {
               await bot.sendMessage(chatId, msg);
-              stateManager.stopChecker(chatId);
+              cleanUpAfterCheck(chatId);
             },
             onCheck: async (msg) => {
               await bot.sendMessage(chatId, msg);
@@ -219,7 +217,7 @@ function startTelegramBot() {
                 chatId,
                 "❗ Kontrol sırasında hata oluştu."
               );
-              stateManager.stopChecker(chatId);
+              cleanUpAfterCheck(chatId);
             },
           },
           chatId

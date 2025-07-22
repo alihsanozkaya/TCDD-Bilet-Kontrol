@@ -137,6 +137,7 @@ async function startCheckingLoop(from, to, date, expeditionId, callbacks = {}, c
 
       if (empty) {
         if (callbacks.onFound) await callbacks.onFound("🚨 Boş yer açıldı! Hemen kontrol et.");
+        stopCheckingLoop(chatId);
         break;
       } else if (!informedDolu) {
         informedDolu = true;
