@@ -2,7 +2,7 @@ const TelegramBot = require("node-telegram-bot-api");
 const ticketChecker = require("../core/ticketChecker");
 const formatter = require("../utils/formatter");
 const stateManager = require("../utils/stateManager");
-const { validStations, stationListText } = require("../data/stations");
+const { validStations } = require("../data/stations");
 const { cleanUpAfterCheck } = require("../utils/stateCleanup");
 
 function startTelegramBot() {
