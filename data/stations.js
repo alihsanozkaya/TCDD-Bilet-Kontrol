@@ -9,11 +9,11 @@ const validStations = {
   "1325": "Söğütlüçeşme"
 };
 
-function stationListText() {
-  return Object.entries(validStations)
-    .sort((a, b) => a[1].localeCompare(b[1]))
-    .map(([code, name]) => `${name} => ${code}`)
-    .join("\n");
-}
+// function stationListText() {
+//   return Object.entries(validStations)
+//     .sort((a, b) => a[1].localeCompare(b[1]))
+//     .map(([code, name]) => `${name} => ${code}`)
+//     .join("\n");
+// }
 
-module.exports = { validStations, stationListText };
+module.exports = { validStations };

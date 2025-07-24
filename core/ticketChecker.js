@@ -25,11 +25,11 @@ function shouldStop(chatId) {
   return stopProgressFlags.get(chatId);
 }
 
-async function clickWithCheck(selector, chatId, timeout = 1000) {
+async function clickWithCheck(selector, chatId, timeout = 2000) {
   if (shouldStop(chatId)) return false;
   await page.waitForSelector(selector, { timeout });
   await page.click(selector);
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(1000);
   return true;
 }
 

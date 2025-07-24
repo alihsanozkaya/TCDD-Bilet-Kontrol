@@ -8,6 +8,28 @@ const { cleanUpAfterCheck } = require("../utils/stateCleanup");
 function startTelegramBot() {
   const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
+  const stationButtons = (step, excludeCode = null) => {
+    const filteredStations = Object.entries(validStations).filter(
+      ([code]) => code !== excludeCode
+    );
+
+    const buttons = [];
+    for (let i = 0; i < filteredStations.length; i += 3) {
+      buttons.push(
+        filteredStations.slice(i, i + 3).map(([code, name]) => ({
+          text: name,
+          callback_data: `${step}_${code}`,
+        }))
+      );
+    }
+
+    return {
+      reply_markup: {
+        inline_keyboard: buttons,
+      },
+    };
+  };
+
   bot.onText(/\/biletbul/, async (msg) => {
     const chatId = msg.chat.id;
 
@@ -24,8 +46,47 @@ function startTelegramBot() {
 
     await bot.sendMessage(
       chatId,
-      "Kalkış istasyon kodunu girin:\n" + stationListText()
+      "Kalkış istasyonunu seçin:",
+      stationButtons("from")
     );
+  });
+
+  bot.on("callback_query", async (query) => {
+    const chatId = query.message.chat.id;
+    const data = query.data;
+    const state = stateManager.getState(chatId);
+
+    if (!state) return;
+
+    if (data.startsWith("from_") && state.step === "from") {
+      const fromCode = data.split("_")[1];
+      state.from = fromCode;
+      state.step = "to";
+      stateManager.setState(chatId, state);
+
+      await bot.editMessageText(`✅ Kalkış: ${validStations[fromCode]}`, {
+        chat_id: chatId,
+        message_id: query.message.message_id,
+      });
+
+      await bot.sendMessage(
+        chatId,
+        "Varış istasyonunu seçin:",
+        stationButtons("to", fromCode)
+      );
+    } else if (data.startsWith("to_") && state.step === "to") {
+      const toCode = data.split("_")[1];
+      state.to = toCode;
+      state.step = "date";
+      stateManager.setState(chatId, state);
+
+      await bot.editMessageText(`✅ Varış: ${validStations[toCode]}`, {
+        chat_id: chatId,
+        message_id: query.message.message_id,
+      });
+
+      await bot.sendMessage(chatId, "Tarih girin (gg aa yyyy):");
+    }
   });
 
   bot.onText(/\/durdur/, async (msg) => {
@@ -58,31 +119,7 @@ function startTelegramBot() {
     const state = stateManager.getState(chatId);
 
     try {
-      if (state.step === "from") {
-        if (!validStations[text]) {
-          await bot.sendMessage(
-            chatId,
-            "Geçersiz kalkış kodu. Tekrar deneyin."
-          );
-          return;
-        }
-        state.from = text;
-        state.step = "to";
-        stateManager.setState(chatId, state);
-        await bot.sendMessage(
-          chatId,
-          "Varış istasyon kodunu girin:\n" + stationListText()
-        );
-      } else if (state.step === "to") {
-        if (!validStations[text]) {
-          await bot.sendMessage(chatId, "Geçersiz varış kodu. Tekrar deneyin.");
-          return;
-        }
-        state.to = text;
-        state.step = "date";
-        stateManager.setState(chatId, state);
-        await bot.sendMessage(chatId, "Tarih girin (gg aa yyyy):");
-      } else if (state.step === "date") {
+      if (state.step === "date") {
         if (!/^\d{2} \d{2} \d{4}$/.test(text)) {
           await bot.sendMessage(
             chatId,
