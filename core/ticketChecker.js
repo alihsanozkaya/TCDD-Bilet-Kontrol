@@ -8,7 +8,7 @@ const stopProgressFlags = new Map();
 async function launchBrowser() {
   if (!browser) {
     browser = await chromium.launch({
-      headless: true,
+      headless: false,
       args: ["--start-maximized"],
     });
     const context = await browser.newContext({ viewport: null });
@@ -128,7 +128,7 @@ async function getExpeditionList(from, to, date, chatId) {
 
 async function checkSelectedExpedition(from, to, date, seat, expeditionId) {
   const browserLocal = await chromium.launch({
-    headless: true,
+    headless: false,
     args: ["--start-maximized"],
   });
   const context = await browserLocal.newContext({ viewport: null });
