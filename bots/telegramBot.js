@@ -4,6 +4,7 @@ const formatter = require("../utils/formatter");
 const stateManager = require("../utils/stateManager");
 const { validStations } = require("../data/stations");
 const { cleanUpAfterCheck } = require("../utils/stateCleanup");
+const { seatClasses } = require("../data/seatClasses");
 
 function startTelegramBot() {
   const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
@@ -30,6 +31,21 @@ function startTelegramBot() {
     };
   };
 
+  const seatButtons = () => {
+    const buttons = seatClasses.map((name, index) => [
+      {
+        text: name,
+        callback_data: `seat_${index + 1}`,
+      },
+    ]);
+
+    return {
+      reply_markup: {
+        inline_keyboard: buttons,
+      },
+    };
+  };
+
   bot.onText(/\/biletbul/, async (msg) => {
     const chatId = msg.chat.id;
 
@@ -46,7 +62,7 @@ function startTelegramBot() {
 
     await bot.sendMessage(
       chatId,
-      "Kalkış istasyonunu seçin:",
+      "🚀 Kalkış istasyonunu seçiniz:",
       stationButtons("from")
     );
   });
@@ -64,14 +80,14 @@ function startTelegramBot() {
       state.step = "to";
       stateManager.setState(chatId, state);
 
-      await bot.editMessageText(`✅ Kalkış: ${validStations[fromCode]}`, {
+      await bot.editMessageText(`🚀 Kalkış: ${validStations[fromCode]}`, {
         chat_id: chatId,
         message_id: query.message.message_id,
       });
 
       await bot.sendMessage(
         chatId,
-        "Varış istasyonunu seçin:",
+        "📍 Varış istasyonunu seçiniz:",
         stationButtons("to", fromCode)
       );
     } else if (data.startsWith("to_") && state.step === "to") {
@@ -80,21 +96,41 @@ function startTelegramBot() {
       state.step = "date";
       stateManager.setState(chatId, state);
 
-      await bot.editMessageText(`✅ Varış: ${validStations[toCode]}`, {
+      await bot.editMessageText(`📍 Varış: ${validStations[toCode]}`, {
         chat_id: chatId,
         message_id: query.message.message_id,
       });
 
-      await bot.sendMessage(chatId, "Tarih girin (gg aa yyyy):");
+      state.step = "seat";
+      stateManager.setState(chatId, state);
+
+      await bot.sendMessage(
+        chatId,
+        "💺 Koltuk sınıfını seçiniz:",
+        seatButtons()
+      );
+    } else if (data.startsWith("seat_") && state.step === "seat") {
+      const seatId = parseInt(data.split("_")[1]);
+      const seatName = seatClasses[seatId - 1];
+
+      state.seatClass = seatName;
+      state.step = "date";
+      stateManager.setState(chatId, state);
+
+      await bot.editMessageText(`💺 Koltuk sınıfı: ${seatName}`, {
+        chat_id: chatId,
+        message_id: query.message.message_id,
+      });
+      await bot.sendMessage(chatId, "📅 Tarih girin (gg aa yyyy):");
     }
   });
 
   bot.onText(/\/durdur/, async (msg) => {
     const chatId = msg.chat.id;
-
     if (stateManager.isChecking(chatId)) {
       await bot.sendMessage(chatId, "🛑 Sefer kontrolü durduruluyor...");
       cleanUpAfterCheck(chatId);
+      ticketChecker.stopCheckingLoop(chatId);
       await bot.sendMessage(chatId, "✅ Kontrol durduruldu.");
       return;
     }
@@ -123,7 +159,7 @@ function startTelegramBot() {
         if (!/^\d{2} \d{2} \d{4}$/.test(text)) {
           await bot.sendMessage(
             chatId,
-            'Geçersiz tarih formatı. "gg aa yyyy" şeklinde girin. Örn: 15 07 2025'
+            'Geçersiz tarih formatı. "gg aa yyyy" şeklinde giriniz. Örn: 15 07 2025'
           );
           return;
         }
@@ -136,7 +172,7 @@ function startTelegramBot() {
         if (inputDate < today) {
           await bot.sendMessage(
             chatId,
-            "⚠️ Geçmiş tarih seçilemez. Lütfen bugünden sonraki bir tarih girin."
+            "⚠️ Geçmiş tarih seçilemez. Lütfen bugünden sonraki bir tarih giriniz."
           );
           return;
         }
@@ -169,9 +205,11 @@ function startTelegramBot() {
 
         await bot.sendMessage(
           chatId,
-          `✅ Bilgiler alındı:\nKalkış: ${validStations[state.from]}\nVarış: ${
-            validStations[state.to]
-          }\nTarih: ${state.date}\n\nSeferler listeleniyor...`
+          `✅ Bilgiler alındı:\n🚀 Kalkış: ${
+            validStations[state.from]
+          }\n📍 Varış: ${validStations[state.to]}\n💺 Koltuk sınıfı: ${
+            state.seatClass
+          }\n📅 Tarih: ${state.date}\n\nSeferler listeleniyor...`
         );
 
         const expeditionList = await ticketChecker.getExpeditionList(
@@ -218,7 +256,7 @@ function startTelegramBot() {
         ) {
           await bot.sendMessage(
             chatId,
-            "Geçersiz sefer numarası. Tekrar deneyin."
+            "Geçersiz sefer numarası. Tekrar deneyiniz."
           );
           return;
         }
@@ -239,6 +277,7 @@ function startTelegramBot() {
           state.from,
           state.to,
           state.date,
+          state.seatClass,
           selectedExpedition.id,
           {
             onFound: async (msg) => {
@@ -264,7 +303,7 @@ function startTelegramBot() {
       console.error(e);
       await bot.sendMessage(
         chatId,
-        "❗ Bir hata oluştu, lütfen tekrar deneyin."
+        "❗ Bir hata oluştu, lütfen tekrar deneyiniz."
       );
       stateManager.deleteState(chatId);
       stateManager.stopChecker(chatId);

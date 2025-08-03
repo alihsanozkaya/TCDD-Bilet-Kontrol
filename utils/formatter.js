@@ -40,7 +40,6 @@ function formatExpeditionListItem(exp, index) {
     arrivalStation,
     departureTime,
     arrivalTime,
-    priceLine,
   } = parseExpeditionText(exp.text);
 
   const emoji = trainLine.startsWith("YHT")
@@ -53,7 +52,6 @@ function formatExpeditionListItem(exp, index) {
 
   🚉 ${departureStation} → ${arrivalStation}
   🕕 ${departureTime} - ${arrivalTime} (${duration})
-  💰 ${priceLine}
 `;
 }
 
@@ -65,7 +63,6 @@ function formatSelectedExpedition(exp) {
     arrivalStation,
     departureTime,
     arrivalTime,
-    priceLine,
     date,
   } = parseExpeditionText(exp.text);
 
@@ -81,9 +78,8 @@ function formatSelectedExpedition(exp) {
 ${emoji} ${trainLine}
 
   🚉 ${departureStation} → ${arrivalStation}
-  🕕 ${departureTime} - ${arrivalTime} (${duration})
   📅 ${date}
-  💰 ${priceLine}
+  🕕 ${departureTime} - ${arrivalTime} (${duration})
 
 📡 Kontrol başlatılıyor...
 `.trim();
