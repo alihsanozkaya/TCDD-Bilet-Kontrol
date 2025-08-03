@@ -106,12 +106,8 @@ async function getExpeditionList(from, to, date, chatId) {
 
     if (shouldStop(chatId)) return null;
 
-    await page
-      .waitForSelector(".seferInformationArea", { timeout: 10000 })
-      .then(() => console.log("Sefer alanı bulundu"))
-      .catch(() =>
-        console.log("Sefer alanı bulunamadı, sayfa içeriği:\n", page.content())
-      );
+    await page.waitForSelector(".seferInformationArea", { timeout: 5000 });
+
     const expeditionButtons = await page.$$(`button[id^="gidis"][id$="btn"]`);
     const expeditionList = [];
 
@@ -159,7 +155,7 @@ async function checkSelectedExpedition(from, to, date, seat, expeditionId) {
       await pageLocal.waitForTimeout(500);
     }
 
-    await pageLocal.waitForSelector(".seferInformationArea", { timeout: 1500 });
+    await pageLocal.waitForSelector(".seferInformationArea", { timeout: 5000 });
     await pageLocal.click(`#${expeditionId}`);
     await pageLocal.waitForTimeout(1000);
 
