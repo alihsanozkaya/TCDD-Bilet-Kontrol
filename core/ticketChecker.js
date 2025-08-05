@@ -139,7 +139,7 @@ async function checkSelectedExpedition(from, to, date, seat, expeditionId) {
       waitUntil: "load",
     });
 
-    const steps = [
+    const selectors = [
       "#fromTrainInput",
       `#gidis-${from}`,
       "#toTrainInput",
@@ -149,13 +149,27 @@ async function checkSelectedExpedition(from, to, date, seat, expeditionId) {
       "#searchSeferButton",
     ];
 
-    for (const selector of steps) {
+    for (const selector of selectors) {
       await pageLocal.waitForSelector(selector, { timeout: 500 });
       await pageLocal.click(selector);
       await pageLocal.waitForTimeout(500);
     }
 
-    await pageLocal.waitForSelector(".seferInformationArea", { timeout: 5000 });
+    await pageLocal
+      .waitForSelector(`#${expeditionId}`, { timeout: 5000 })
+      .catch(() => null);
+
+    const expeditionButton = await pageLocal.$(`#${expeditionId}`);
+
+    if (!expeditionButton) return "EXPIRED";
+    else {
+      const priceText = await expeditionButton.$eval(".price", (el) =>
+        el.innerText.trim().toLowerCase()
+      );
+
+      if (priceText === "dolu") return false;
+    }
+
     await pageLocal.click(`#${expeditionId}`);
     await pageLocal.waitForTimeout(1000);
 
@@ -179,11 +193,11 @@ async function startCheckingLoop(
   chatId
 ) {
   stopCheckingFlags.set(chatId, false);
-  let informedDolu = false;
+  let isFull = false;
 
   try {
     while (!stopCheckingFlags.get(chatId)) {
-      const empty = await checkSelectedExpedition(
+      const result = await checkSelectedExpedition(
         from,
         to,
         date,
@@ -192,13 +206,18 @@ async function startCheckingLoop(
       );
       if (stopCheckingFlags.get(chatId)) break;
 
-      if (empty) {
+      if (result === "EXPIRED") {
+        if (callbacks.onExpired) await callbacks.onExpired();
+        break;
+      }
+
+      if (result) {
         if (callbacks.onFound)
           await callbacks.onFound("🚨 Boş yer açıldı! Hemen kontrol et.");
         stopCheckingLoop(chatId);
         break;
-      } else if (!informedDolu) {
-        informedDolu = true;
+      } else if (!isFull) {
+        isFull = true;
         if (callbacks.onCheck)
           await callbacks.onCheck(
             "❌ Sefer şu anda dolu. Boş yer açılınca haber verilecektir."

@@ -10,9 +10,9 @@ function startTelegramBot() {
   const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 
   const stationButtons = (step, excludeCode = null) => {
-    const filteredStations = Object.entries(validStations).filter(
-      ([code]) => code !== excludeCode
-    );
+    const filteredStations = Object.entries(validStations)
+      .filter(([code]) => code !== excludeCode)
+      .sort((a, b) => a[1].localeCompare(b[1]));
 
     const buttons = [];
     for (let i = 0; i < filteredStations.length; i += 3) {
@@ -286,6 +286,13 @@ function startTelegramBot() {
             },
             onCheck: async (msg) => {
               await bot.sendMessage(chatId, msg);
+            },
+            onExpired: async () => {
+              await bot.sendMessage(
+                chatId,
+                "⚠️ Sefer tarihi geçmiş. Kontrol durduruldu."
+              );
+              cleanUpAfterCheck(chatId);
             },
             onError: async (err) => {
               console.error(err);
