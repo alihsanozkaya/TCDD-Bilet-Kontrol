@@ -220,7 +220,7 @@ function startTelegramBot() {
         );
 
         if (!expeditionList) {
-          stateManager.deleteState(chatId);
+          cleanUpAfterCheck(chatId);
           return;
         }
 
@@ -229,7 +229,7 @@ function startTelegramBot() {
             chatId,
             "⚠️ Bu tarih ve güzergah için sefer bulunamadı."
           );
-          stateManager.deleteState(chatId);
+          cleanUpAfterCheck(chatId);
           await ticketChecker.closeListBrowser();
           return;
         }
@@ -312,8 +312,7 @@ function startTelegramBot() {
         chatId,
         "❗ Bir hata oluştu, lütfen tekrar deneyiniz."
       );
-      stateManager.deleteState(chatId);
-      stateManager.stopChecker(chatId);
+      cleanUpAfterCheck(chatId);
     }
   });
 
