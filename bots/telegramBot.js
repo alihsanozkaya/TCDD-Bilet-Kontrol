@@ -138,7 +138,6 @@ function startTelegramBot() {
     if (stateManager.isInProgress(chatId)) {
       ticketChecker.setStopFlag(chatId);
       stateManager.clearUserState(chatId);
-      stateManager.deleteState(chatId);
       await bot.sendMessage(chatId, "🛑 İşlem iptal edildi.");
       return;
     }
@@ -245,7 +244,7 @@ function startTelegramBot() {
 
         await bot.sendMessage(
           chatId,
-          replyText + "✏️ Lütfen seçmek istediğiniz seferin numarasını yazınız:"
+          replyText + "\n✏️ Lütfen seçmek istediğiniz seferin numarasını yazınız:"
         );
       } else if (state.step === "expedition") {
         const idx = parseInt(text);
@@ -279,6 +278,8 @@ function startTelegramBot() {
           state.date,
           state.seatClass,
           selectedExpedition.id,
+          selectedExpedition.departureDate,
+          selectedExpedition.departureTime,
           {
             onFound: async (msg) => {
               await bot.sendMessage(chatId, msg);

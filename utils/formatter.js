@@ -90,4 +90,5 @@ module.exports = {
   formatConfirmationMessage,
   formatExpeditionListItem,
   formatSelectedExpedition,
+  parseExpeditionText
 };

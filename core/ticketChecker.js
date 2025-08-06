@@ -1,26 +1,30 @@
 const { chromium } = require("playwright");
+const { parseExpeditionText } = require("../utils/formatter");
 
-let browser = null;
-let page = null;
+const browsers = new Map();
+const pages = new Map();
 const stopCheckingFlags = new Map();
 const stopProgressFlags = new Map();
 
-async function launchBrowser() {
-  if (!browser) {
-    browser = await chromium.launch({
+async function launchBrowser(chatId) {
+  if (!browsers.has(chatId)) {
+    const browser = await chromium.launch({
       headless: true,
       args: ["--start-maximized"],
     });
     const context = await browser.newContext({ viewport: null });
-    page = await context.newPage();
+    const page = await context.newPage();
+
+    browsers.set(chatId, browser);
+    pages.set(chatId, page);
   }
 }
 
-async function closeBrowser() {
-  if (browser) {
-    await browser.close();
-    browser = null;
-    page = null;
+async function closeBrowser(chatId) {
+  if (browsers.has(chatId)) {
+    await browsers.get(chatId).close();
+    browsers.delete(chatId);
+    pages.delete(chatId);
   }
 }
 
@@ -28,8 +32,8 @@ function shouldStop(chatId) {
   return stopProgressFlags.get(chatId);
 }
 
-async function closeListBrowser() {
-  await closeBrowser();
+async function closeListBrowser(chatId) {
+  await closeBrowser(chatId);
 }
 
 async function checkIfSeatAvailable(
@@ -66,19 +70,22 @@ async function clickWithCheck(selector, chatId, timeout = 500) {
   if (shouldStop(chatId)) return false;
 
   try {
+    const page = pages.get(chatId);
     await page.waitForSelector(selector, { timeout });
     await page.click(selector);
     await page.waitForTimeout(500);
     return true;
   } catch (e) {
-    console.error(`Hata (selector: ${selector}):`, e);
+    console.error(`Hata (selector: ${selector}, chatId: ${chatId}):`, e);
     return false;
   }
 }
 
 async function getExpeditionList(from, to, date, chatId) {
   stopProgressFlags.set(chatId, false);
-  await launchBrowser();
+  await launchBrowser(chatId);
+
+  const page = pages.get(chatId);
 
   try {
     await page.goto("https://ebilet.tcddtasimacilik.gov.tr/", {
@@ -114,19 +121,31 @@ async function getExpeditionList(from, to, date, chatId) {
     for (const btn of expeditionButtons) {
       const id = await btn.getAttribute("id");
       const text = await btn.innerText();
-      expeditionList.push({ id, text });
+      const expeditionData = parseExpeditionText(text);
+      expeditionList.push({
+        id,
+        text,
+        departureDate: expeditionData.date,
+        departureTime: expeditionData.departureTime,
+      });
     }
 
     return expeditionList;
   } catch (err) {
     console.error("getExpeditionList error:", err);
     return null;
-  } finally {
-    await closeBrowser();
   }
 }
 
-async function checkSelectedExpedition(from, to, date, seat, expeditionId) {
+async function checkSelectedExpedition(
+  from,
+  to,
+  date,
+  seat,
+  expeditionId,
+  departureDate,
+  departureTime,
+) {
   const browserLocal = await chromium.launch({
     headless: true,
     args: ["--start-maximized"],
@@ -155,14 +174,27 @@ async function checkSelectedExpedition(from, to, date, seat, expeditionId) {
       await pageLocal.waitForTimeout(500);
     }
 
-    await pageLocal
-      .waitForSelector(`#${expeditionId}`, { timeout: 5000 })
-      .catch(() => null);
+    const [day, month, year] = departureDate.split(".");
+    const [hours, minutes] = departureTime.split(":");
+
+    const expeditionDateObj = new Date(
+      parseInt(year),
+      parseInt(month) - 1,
+      parseInt(day),
+      parseInt(hours),
+      parseInt(minutes),
+      0
+    );
+
+    const now = new Date();
+
+    if (expeditionDateObj.getTime() < now.getTime()) {
+      return "EXPIRED";
+    }
 
     const expeditionButton = await pageLocal.$(`#${expeditionId}`);
 
-    if (!expeditionButton) return "EXPIRED";
-    else {
+    if (expeditionButton) {
       const priceText = await expeditionButton.$eval(".price", (el) =>
         el.innerText.trim().toLowerCase()
       );
@@ -189,6 +221,8 @@ async function startCheckingLoop(
   date,
   seat,
   expeditionId,
+  departureDate,
+  departureTime,
   callbacks = {},
   chatId
 ) {
@@ -202,7 +236,9 @@ async function startCheckingLoop(
         to,
         date,
         seat,
-        expeditionId
+        expeditionId,
+        departureDate,
+        departureTime,
       );
       if (stopCheckingFlags.get(chatId)) break;
 
@@ -230,7 +266,7 @@ async function startCheckingLoop(
     if (callbacks.onError) await callbacks.onError(err);
   } finally {
     stopCheckingFlags.delete(chatId);
-    await closeBrowser();
+    await closeBrowser(chatId);
   }
 }
 
