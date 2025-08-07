@@ -66,14 +66,14 @@ async function checkIfSeatAvailable(
   return false;
 }
 
-async function clickWithCheck(selector, chatId, timeout = 5000) {
+async function clickWithCheck(selector, chatId) {
   if (shouldStop(chatId)) return false;
 
   try {
     const page = pages.get(chatId);
-    await page.waitForSelector(selector, { timeout });
+    await page.waitForSelector(selector);
     await page.click(selector);
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
     return true;
   } catch (e) {
     console.error(`Hata (selector: ${selector}, chatId: ${chatId}):`, e);
@@ -113,7 +113,7 @@ async function getExpeditionList(from, to, date, chatId) {
 
     if (shouldStop(chatId)) return null;
 
-    await page.waitForSelector(".seferInformationArea", { timeout: 5000 });
+    await page.waitForSelector(".seferInformationArea");
 
     const expeditionButtons = await page.$$(`button[id^="gidis"][id$="btn"]`);
     const expeditionList = [];
@@ -169,9 +169,9 @@ async function checkSelectedExpedition(
     ];
 
     for (const selector of selectors) {
-      await pageLocal.waitForSelector(selector, { timeout: 5000 });
+      await pageLocal.waitForSelector(selector);
       await pageLocal.click(selector);
-      await pageLocal.waitForTimeout(500);
+      await pageLocal.waitForTimeout(1000);
     }
 
     const [day, month, year] = departureDate.split(".");
