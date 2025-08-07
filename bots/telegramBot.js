@@ -46,6 +46,24 @@ function startTelegramBot() {
     };
   };
 
+  bot.onText(/\/start/, (msg) => {
+    const chatId = msg.chat.id;
+    const welcomeMessage = `
+Merhaba 👋
+
+Bu bot, TCDD e-bilet sisteminde belirttiğiniz tarih ve güzergah için sizin yerinize otomatik olarak boş koltuk kontrolü yapar.
+
+🎟️ /biletbul  
+— Kalkış, varış, tarih ve koltuk sınıfı bilgilerinizi adım adım girerek sorgu başlatmak için kullanılır.
+
+⛔ /durdur  
+— Devam eden kontrolü sonlandırır.
+
+İyi yolculuklar dileriz 🚆
+`;
+    bot.sendMessage(chatId, welcomeMessage);
+  });
+
   bot.onText(/\/biletbul/, async (msg) => {
     const chatId = msg.chat.id;
 
@@ -121,7 +139,7 @@ function startTelegramBot() {
         chat_id: chatId,
         message_id: query.message.message_id,
       });
-      await bot.sendMessage(chatId, "📅 Tarih girin (gg aa yyyy):");
+      await bot.sendMessage(chatId, "📅 Tarih giriniz (gg aa yyyy):");
     }
   });
 

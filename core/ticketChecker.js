@@ -66,7 +66,7 @@ async function checkIfSeatAvailable(
   return false;
 }
 
-async function clickWithCheck(selector, chatId, timeout = 500) {
+async function clickWithCheck(selector, chatId, timeout = 5000) {
   if (shouldStop(chatId)) return false;
 
   try {
@@ -169,7 +169,7 @@ async function checkSelectedExpedition(
     ];
 
     for (const selector of selectors) {
-      await pageLocal.waitForSelector(selector, { timeout: 500 });
+      await pageLocal.waitForSelector(selector, { timeout: 5000 });
       await pageLocal.click(selector);
       await pageLocal.waitForTimeout(500);
     }
