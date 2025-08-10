@@ -73,7 +73,7 @@ async function clickWithCheck(selector, chatId) {
     const page = pages.get(chatId);
     await page.waitForSelector(selector);
     await page.click(selector);
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(500);
     return true;
   } catch (e) {
     console.error(`Hata (selector: ${selector}, chatId: ${chatId}):`, e);
@@ -91,6 +91,7 @@ async function getExpeditionList(from, to, date, chatId) {
     await page.goto("https://ebilet.tcddtasimacilik.gov.tr/", {
       waitUntil: "load",
     });
+    await page.waitForTimeout(1000);
 
     const actions = [
       () => clickWithCheck("#fromTrainInput", chatId),
@@ -134,6 +135,8 @@ async function getExpeditionList(from, to, date, chatId) {
   } catch (err) {
     console.error("getExpeditionList error:", err);
     return null;
+  } finally {
+    await closeBrowser(chatId);
   }
 }
 
@@ -144,7 +147,7 @@ async function checkSelectedExpedition(
   seat,
   expeditionId,
   departureDate,
-  departureTime,
+  departureTime
 ) {
   const browserLocal = await chromium.launch({
     headless: true,
@@ -157,6 +160,7 @@ async function checkSelectedExpedition(
     await pageLocal.goto("https://ebilet.tcddtasimacilik.gov.tr/", {
       waitUntil: "load",
     });
+    await pageLocal.waitForTimeout(1000);
 
     const selectors = [
       "#fromTrainInput",
@@ -171,7 +175,7 @@ async function checkSelectedExpedition(
     for (const selector of selectors) {
       await pageLocal.waitForSelector(selector);
       await pageLocal.click(selector);
-      await pageLocal.waitForTimeout(1000);
+      await pageLocal.waitForTimeout(500);
     }
 
     const [day, month, year] = departureDate.split(".");
@@ -186,9 +190,11 @@ async function checkSelectedExpedition(
       0
     );
 
+    const cutoffTime = new Date(expeditionDateObj.getTime() - 15 * 60 * 1000);
+
     const now = new Date();
 
-    if (expeditionDateObj.getTime() < now.getTime()) {
+    if (now.getTime() > cutoffTime.getTime()) {
       return "EXPIRED";
     }
 
@@ -238,7 +244,7 @@ async function startCheckingLoop(
         seat,
         expeditionId,
         departureDate,
-        departureTime,
+        departureTime
       );
       if (stopCheckingFlags.get(chatId)) break;
 
