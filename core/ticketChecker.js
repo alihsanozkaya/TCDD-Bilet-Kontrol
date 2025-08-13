@@ -6,15 +6,41 @@ const pages = new Map();
 const stopCheckingFlags = new Map();
 const stopProgressFlags = new Map();
 
+async function createStealthBrowser(headless) {
+  const browser = await chromium.launch({
+    headless: headless,
+    args: [
+      "--disable-blink-features=AutomationControlled",
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-gpu",
+    ],
+  });
+
+  const context = await browser.newContext({
+    viewport: { width: 1920, height: 1080 },
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+  });
+
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => false });
+    window.chrome = { runtime: {} };
+    Object.defineProperty(navigator, "languages", {
+      get: () => ["tr-TR", "tr"],
+    });
+    Object.defineProperty(navigator, "plugins", {
+      get: () => [1, 2, 3],
+    });
+  });
+
+  return { browser, context };
+}
+
 async function launchBrowser(chatId) {
   if (!browsers.has(chatId)) {
-    const browser = await chromium.launch({
-      headless: true,
-      args: ["--start-maximized"],
-    });
-    const context = await browser.newContext({ viewport: null });
+    const { browser, context } = await createStealthBrowser(true);
     const page = await context.newPage();
-
     browsers.set(chatId, browser);
     pages.set(chatId, page);
   }
@@ -62,7 +88,6 @@ async function checkIfSeatAvailable(
       }
     }
   }
-
   return false;
 }
 
@@ -71,7 +96,7 @@ async function clickWithCheck(selector, chatId) {
 
   try {
     const page = pages.get(chatId);
-    await page.waitForSelector(selector);
+    await page.waitForSelector(selector, { timeout: 15000 });
     await page.click(selector);
     await page.waitForTimeout(500);
     return true;
@@ -89,7 +114,8 @@ async function getExpeditionList(from, to, date, chatId) {
 
   try {
     await page.goto("https://ebilet.tcddtasimacilik.gov.tr/", {
-      waitUntil: "load",
+      waitUntil: "networkidle",
+      timeout: 60000,
     });
     await page.waitForTimeout(1000);
 
@@ -114,7 +140,7 @@ async function getExpeditionList(from, to, date, chatId) {
 
     if (shouldStop(chatId)) return null;
 
-    await page.waitForSelector(".seferInformationArea");
+    await page.waitForSelector(".seferInformationArea", { timeout: 20000 });
 
     const expeditionButtons = await page.$$(`button[id^="gidis"][id$="btn"]`);
     const expeditionList = [];
@@ -149,16 +175,13 @@ async function checkSelectedExpedition(
   departureDate,
   departureTime
 ) {
-  const browserLocal = await chromium.launch({
-    headless: true,
-    args: ["--start-maximized"],
-  });
-  const context = await browserLocal.newContext({ viewport: null });
+  const { browser, context } = await createStealthBrowser(true);
   const pageLocal = await context.newPage();
 
   try {
     await pageLocal.goto("https://ebilet.tcddtasimacilik.gov.tr/", {
-      waitUntil: "load",
+      waitUntil: "networkidle",
+      timeout: 60000,
     });
     await pageLocal.waitForTimeout(1000);
 
@@ -173,14 +196,13 @@ async function checkSelectedExpedition(
     ];
 
     for (const selector of selectors) {
-      await pageLocal.waitForSelector(selector);
+      await pageLocal.waitForSelector(selector, { timeout: 15000 });
       await pageLocal.click(selector);
       await pageLocal.waitForTimeout(500);
     }
 
     const [day, month, year] = departureDate.split(".");
     const [hours, minutes] = departureTime.split(":");
-
     const expeditionDateObj = new Date(
       parseInt(year),
       parseInt(month) - 1,
@@ -189,9 +211,7 @@ async function checkSelectedExpedition(
       parseInt(minutes),
       0
     );
-
     const cutoffTime = new Date(expeditionDateObj.getTime() - 15 * 60 * 1000);
-
     const now = new Date();
 
     if (now.getTime() > cutoffTime.getTime()) {
@@ -199,12 +219,10 @@ async function checkSelectedExpedition(
     }
 
     const expeditionButton = await pageLocal.$(`#${expeditionId}`);
-
     if (expeditionButton) {
       const priceText = await expeditionButton.$eval(".price", (el) =>
         el.innerText.trim().toLowerCase()
       );
-
       if (priceText === "dolu") return false;
     }
 
@@ -217,7 +235,7 @@ async function checkSelectedExpedition(
     console.error("Sefer kontrolünde hata:", err);
     return false;
   } finally {
-    await browserLocal.close();
+    await browser.close();
   }
 }
 
