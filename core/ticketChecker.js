@@ -106,6 +106,17 @@ async function clickWithCheck(selector, chatId) {
   }
 }
 
+async function waitForOverlay(page) {
+  try {
+    await page.waitForSelector(".vld-overlay.is-active", {
+      state: "hidden",
+      timeout: 5000,
+    });
+  } catch {
+    console.log("Overlay gözükmedi veya timeout oldu, devam ediliyor...");
+  }
+}
+
 async function getExpeditionList(from, to, date, chatId) {
   stopProgressFlags.set(chatId, false);
   await launchBrowser(chatId);
@@ -226,6 +237,7 @@ async function checkSelectedExpedition(
       if (priceText === "dolu") return false;
     }
 
+    await waitForOverlay(pageLocal);
     await pageLocal.click(`#${expeditionId}`);
     await pageLocal.waitForTimeout(1000);
 
