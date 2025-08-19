@@ -6,6 +6,7 @@ const validStations = {
   "93": "Eskişehir",
   "1135": "İzmit YHT",
   "48": "Pendik",
+  "244": "Polatlı YHT",
   "1336": "Selçuklu YHT",
   "566": "Sivas",
   "1325": "Söğütlüçeşme"
