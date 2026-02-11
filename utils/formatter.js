@@ -1,15 +1,4 @@
-export function isValidDateFormat(dateStr) {
-  return /^\d{2} \d{2} \d{4}$/.test(dateStr);
-}
-
-export function formatConfirmationMessage(fromCode, toCode, date, stations) {
-  return `✅ Bilgiler alındı:
-Kalkış: ${stations[fromCode]}
-Varış: ${stations[toCode]}
-Tarih: ${date}
-
-🔍 Sorgu başlatılıyor...`;
-}
+import * as MSG from "../utils/messages.js";
 
 export function parseTripText(text) {
   const lines = text
@@ -32,40 +21,49 @@ export function parseTripText(text) {
   };
 }
 
-export function formatTripistItem(exp, index) {
-  const {
-    trainLine,
-    departureStation,
-    duration,
-    arrivalStation,
-    departureTime,
-    arrivalTime,
-  } = parseTripText(exp.text);
+export function formatTripistItem(exp, index, stationMap) {
+  const fromName =
+    stationMap?.get(String(exp.departureStationId)) ?? exp.departureStationId;
 
-  const emoji = trainLine.startsWith("YHT")
-    ? "🚅"
-    : trainLine.startsWith("ANAHAT")
-    ? "🚞"
-    : "🚄";
+  const toName =
+    stationMap?.get(String(exp.arrivalStationId)) ?? exp.arrivalStationId;
 
-  return `${index + 1}. ${emoji} ${trainLine}
-
-  🚉 ${departureStation} → ${arrivalStation}
-  🕕 ${departureTime} - ${arrivalTime} (${duration})
-`;
+  return (
+    `${index + 1}. 🚅 YHT ${exp.commercialName}\n\n` +
+    `  🚉 ${fromName} → ${toName}\n` +
+    `  🕒 ${exp.departure} - ${exp.arrival} (${exp.duration})\n` +
+    `  💺 Ekonomi: ${exp.economy} | Business: ${exp.business}\n`
+  );
 }
 
 export function formatActiveSearches(searches, stations, seats) {
-  if (!searches.length) return "🔍 Aktif aramanız bulunmuyor.";
+  if (!searches.length) return MSG.noActiveSearch;
 
-  let message = "🔍 Aktif Aramalarınız:\n\n";
+  const stationMap = new Map(stations.map(s => [s.code, s.name]));
+  const seatMap = new Map(seats.map(s => [s._id, s.name]));
+
+  let message = MSG.activeSearch;
+
   searches.forEach((search, i) => {
-    message += `${i + 1}. ${
-      stations.find((s) => s.code == search.fromStationCode).name
-    } → ${stations.find((s) => s.code == search.toStationCode).name}\n`;
+    const fromName = stationMap.get(search.fromStationCode);
+    const toName = stationMap.get(search.toStationCode);
+    const seatName = seatMap.get(search.seatType);
+
+    const times = search.tripList
+      .map(t => t.departureTime)
+      .join(", ");
+
+    message += `${i + 1})\n`;
+    message += `   🚉 ${fromName} → ${toName}\n`;
     message += `   📅 ${search.travelDate}\n`;
-    message += `   💺 ${seats.find((s) => s._id == search.seatType).name}\n`;
+    message += `   ⏱️ ${times}\n`;
+    message += `   💺 ${seatName}\n`;
     message += `   🚂 ${search.tripList.length} sefer izleniyor\n\n`;
   });
+
   return message;
+}
+
+export function formatTripDate(dateStr) {
+  return dateStr.replace(/\./g, " ");
 }

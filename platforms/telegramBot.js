@@ -1,27 +1,29 @@
-import TelegramBot from "node-telegram-bot-api";
-import {
-  getTripList,
-  startMultiTripChecker,
-  stopChecker,
-} from "../core/ticketChecker.js";
-import { formatActiveSearches, formatTripistItem } from "../utils/formatter.js";
-import { getAllSteats } from "../services/seatService.js";
-import { getAllStations } from "../services/stationService.js";
-import {
-  findOrCreateUser,
-  getChatIdByUserId,
-} from "../services/userService.js";
 import {
   getActiveSearchesByUser,
   createSearch,
   stopSearch,
   stopExpiredSearches,
   stopErrorSearch,
-  refreshSearchTripList,
   getAllActiveSearches,
   foundSearch,
+  preview,
 } from "../services/searchService.js";
+import {
+  findOrCreateUser,
+  getChatIdByUserId,
+} from "../services/userService.js";
 import * as MSG from "../utils/messages.js";
+import TelegramBot from "node-telegram-bot-api";
+import { getAllSteats } from "../services/seatService.js";
+import { getAllStations } from "../services/stationService.js";
+import { startApiTripChecker, stopApiChecker } from "../core/apiTripChecker.js";
+import {
+  formatActiveSearches,
+  formatTripDate,
+  formatTripistItem,
+} from "../utils/formatter.js";
+
+const ALLOWED_COMMANDS = ["/start", "/biletbul", "/listele", "/durdur"];
 
 //#region STATE MANAGEMENT
 const tempStates = new Map();
@@ -41,15 +43,18 @@ const clearState = (chatId) => {
   tempStates.delete(chatId);
 };
 
-setInterval(() => {
-  const now = Date.now();
-  for (const [chatId, state] of tempStates) {
-    if (now - state.updatedAt > STATE_TTL) tempStates.delete(chatId);
-  }
-}, 5 * 60 * 1000);
+setInterval(
+  () => {
+    const now = Date.now();
+    for (const [chatId, state] of tempStates) {
+      if (now - state.updatedAt > STATE_TTL) tempStates.delete(chatId);
+    }
+  },
+  5 * 60 * 1000,
+);
 //#endregion
 
-//#region BUTTON HELPERS
+//#region HELPER FUNCTIONS
 const stationButtons = (stations, exclude = null) => {
   const filtered = stations.filter((s) => s.code !== exclude);
   const keyboard = [];
@@ -58,7 +63,7 @@ const stationButtons = (stations, exclude = null) => {
       filtered.slice(i, i + 3).map((s) => ({
         text: s.name,
         callback_data: `station_${s.code}`,
-      }))
+      })),
     );
   }
   return { reply_markup: { inline_keyboard: keyboard } };
@@ -71,6 +76,58 @@ const seatButtons = (seats) => ({
     ]),
   },
 });
+
+const checkTripAvailability = async ({
+  fromStationId,
+  toStationId,
+  travelDate,
+  seatClass,
+  selectedTrips,
+}) => {
+  try {
+    const trips = await preview({
+      fromStationId,
+      toStationId,
+      departureDate: travelDate,
+    });
+
+    if (!Array.isArray(trips) || trips.length === 0) {
+      return { allFull: true, availableTrips: [], fullTrips: selectedTrips };
+    }
+
+    const availableTrips = [];
+    const fullTrips = [];
+
+    for (const selected of selectedTrips) {
+      const trip = trips.find(
+        (t) => Number(t.trainId) === Number(selected.trainId),
+      );
+
+      if (!trip) {
+        fullTrips.push(selected);
+        continue;
+      }
+
+      const hasStock =
+        seatClass === "EKONOMİ" ? trip.economy > 0 : trip.business > 0;
+
+      if (hasStock) {
+        availableTrips.push({ ...selected, stockInfo: trip });
+      } else {
+        fullTrips.push(selected);
+      }
+    }
+
+    return {
+      allFull: availableTrips.length === 0,
+      availableTrips,
+      fullTrips,
+    };
+  } catch (err) {
+    console.error("[checkTripAvailability] Error:", err);
+    throw err;
+  }
+};
 //#endregion
 
 //#region BOT START
@@ -85,74 +142,81 @@ export const startTelegramBot = () => {
     },
   });
 
+  //#region RECOVERY LOGIC
   (async () => {
     try {
+      await stopExpiredSearches();
+
       const activeSearches = await getAllActiveSearches();
 
       STATIONS_CACHE = await getAllStations();
       SEATS_CACHE = await getAllSteats();
 
       const stationMap = new Map(STATIONS_CACHE.map((s) => [s.code, s.name]));
-      const seatMap = new Map(
-        SEATS_CACHE.map((s) => [s._id.toString(), s.name])
-      );
+      const seatMap = new Map(SEATS_CACHE.map((s) => [s._id, s.name]));
 
       for (const search of activeSearches) {
         const chatId = await getChatIdByUserId(search.userId);
 
         const fromName = stationMap.get(search.fromStationCode);
         const toName = stationMap.get(search.toStationCode);
-        const travelDate = search.travelDate;
-        const seatName = seatMap.get(search.seatType?.toString());
-        const tripsToCheck = search.tripList.map((t) => ({
-          tripId: t.tripId,
-          departureTime: t.departureTime,
-        }));
+        const seatName = seatMap.get(search.seatType);
 
-        startMultiTripChecker(
-          search.userId,
-          search._id,
-          search.fromStationCode,
-          search.toStationCode,
-          search.travelDate,
-          seatName,
-          tripsToCheck,
-          {
-            onFound: async (trip, searchId) => {
+        if (!seatName) {
+          await stopErrorSearch(search._id);
+          continue;
+        }
+
+        startApiTripChecker({
+          searchId: search._id,
+          fromStationId: search.fromStationCode,
+          toStationId: search.toStationCode,
+          travelDate: search.travelDate,
+          seatClass: seatName,
+          selectedTrips: search.tripList,
+          callbacks: {
+            onFound: async (trip) => {
+              await foundSearch(search._id);
               await bot.sendMessage(
                 chatId,
                 `🎉 YER BULUNDU!\n\n` +
-                  `🚉 ${fromName} → ${toName}\n\n` +
-                  `📅 Tarih: ${travelDate}\n` +
-                  `⏱️ Saat: ${trip.departureTime}\n` +
-                  `🔗 https://ebilet.tcddtasimacilik.gov.tr/`
+                  `🚉 ${fromName} → ${toName}\n` +
+                  `📅 ${formatTripDate(trip.date)}\n` +
+                  `⏱️ ${trip.departure}\n` +
+                  `💺 ${seatName}\n` +
+                  `🔗 https://ebilet.tcddtasimacilik.gov.tr/`,
               );
-              await foundSearch(searchId);
             },
-            onTripExpired: async (trip) => {
-              await bot.sendMessage(
-                chatId,
-                `⏰ ${trip.departureTime} seferinin süresi geçti.`
-              );
-              await refreshSearchTripList(search._id);
-            },
-            onAllExpired: async () => {
+            onExpired: async (expiredTrips) => {
+              await stopSearch(search._id);
               await bot.sendMessage(chatId, MSG.isTripExpired);
-              await stopExpiredSearches();
+            },
+            onExpiredNotified: async (expiredTrips) => {
+              await stopSearch(search._id);
+              await bot.sendMessage(chatId, MSG.isTripExpired);
             },
             onError: async (err) => {
-              console.error(err);
-              await bot.sendMessage(chatId, MSG.errorOccurred);
               await stopErrorSearch(search._id);
             },
-          }
-        );
+          },
+        });
       }
     } catch (err) {
-      console.error("[Kurtarma Hatası]:", err);
-      return true;
+      console.error("[RECOVERY ERROR]", err);
     }
   })();
+
+  setInterval(
+    async () => {
+      try {
+        await stopExpiredSearches();
+      } catch (err) {
+        console.error("[CLEANUP ERROR]", err);
+      }
+    },
+    15 * 60 * 1000,
+  );
+  //#endregion
 
   //#region /start
   bot.onText(/\/start/, async (msg) => {
@@ -161,7 +225,7 @@ export const startTelegramBot = () => {
       await findOrCreateUser(msg.from.id);
       await bot.sendMessage(chatId, MSG.startMessage);
     } catch (err) {
-      console.error(err);
+      console.error("[/start] Error:", err);
       bot.sendMessage(chatId, MSG.failedCreateUser);
     }
   });
@@ -172,8 +236,9 @@ export const startTelegramBot = () => {
     const chatId = msg.chat.id;
     const telegramId = msg.from.id;
     try {
-      if (!STATIONS_CACHE || !SEATS_CACHE)
+      if (!STATIONS_CACHE || !SEATS_CACHE) {
         return bot.sendMessage(msg.chat.id, MSG.startSystem);
+      }
 
       const user = await findOrCreateUser(telegramId);
       const searches = await getActiveSearchesByUser(user._id);
@@ -192,10 +257,10 @@ export const startTelegramBot = () => {
       await bot.sendMessage(
         chatId,
         MSG.departureMessage,
-        stationButtons(STATIONS_CACHE)
+        stationButtons(STATIONS_CACHE),
       );
     } catch (err) {
-      console.error(err);
+      console.error("[/biletbul] Error:", err);
       bot.sendMessage(chatId, MSG.biletbulError);
     }
   });
@@ -208,14 +273,16 @@ export const startTelegramBot = () => {
       const user = await findOrCreateUser(msg.from.id);
       const searches = await getActiveSearchesByUser(user._id);
 
-      if (!searches.length) return bot.sendMessage(chatId, MSG.noActiveSearch);
+      if (!searches.length) {
+        return bot.sendMessage(chatId, MSG.noActiveSearch);
+      }
 
       await bot.sendMessage(
         chatId,
-        formatActiveSearches(searches, STATIONS_CACHE, SEATS_CACHE)
+        formatActiveSearches(searches, STATIONS_CACHE, SEATS_CACHE),
       );
     } catch (err) {
-      console.error(err);
+      console.error("[/listele] Error:", err);
       bot.sendMessage(chatId, MSG.listeleError);
     }
   });
@@ -229,7 +296,9 @@ export const startTelegramBot = () => {
       const user = await findOrCreateUser(msg.from.id);
       const searches = await getActiveSearchesByUser(user._id);
 
-      if (!searches.length) return bot.sendMessage(chatId, MSG.noActiveSearch);
+      if (!searches.length) {
+        return bot.sendMessage(chatId, MSG.noActiveSearch);
+      }
 
       setState(chatId, {
         step: "stop-inline",
@@ -237,7 +306,7 @@ export const startTelegramBot = () => {
       });
 
       const stationMap = new Map(
-        STATIONS_CACHE.map((st) => [st.code, st.name])
+        STATIONS_CACHE.map((st) => [st.code, st.name]),
       );
 
       const buttons = searches.map((search, i) => {
@@ -247,7 +316,10 @@ export const startTelegramBot = () => {
 
         return [
           {
-            text: `🛑 ${i + 1}. ${fromName} → ${toName} | ${times}`,
+            text:
+              `🛑 ${i + 1}. ${fromName} → ${toName} | ` +
+              `📅 ${search.travelDate} | ` +
+              `⏱️ ${times}`,
             callback_data: `stop_${search._id}`,
           },
         ];
@@ -273,7 +345,7 @@ export const startTelegramBot = () => {
         },
       });
     } catch (err) {
-      console.error(err);
+      console.error("[/durdur] Error:", err);
       bot.sendMessage(chatId, MSG.stopListError);
     }
   });
@@ -294,9 +366,12 @@ export const startTelegramBot = () => {
 
     const data = query.data;
     try {
-      if (data.startsWith("station_") && state.step == "from") {
-        const from = STATIONS_CACHE.find((s) => s.code == data.split("_")[1]);
-        if (!from) return clearState(chatId);
+      if (data.startsWith("station_") && state.step === "from") {
+        const from = STATIONS_CACHE.find((s) => s.code === data.split("_")[1]);
+        if (!from) {
+          clearState(chatId);
+          return;
+        }
 
         setState(chatId, {
           ...state,
@@ -313,12 +388,16 @@ export const startTelegramBot = () => {
         await bot.sendMessage(
           chatId,
           MSG.estimatedMessage,
-          stationButtons(STATIONS_CACHE, from.code)
+          stationButtons(STATIONS_CACHE, from.code),
         );
       }
-      if (data.startsWith("station_") && state.step == "to") {
-        const to = STATIONS_CACHE.find((s) => s.code == data.split("_")[1]);
-        if (!to) return clearState(chatId);
+
+      if (data.startsWith("station_") && state.step === "to") {
+        const to = STATIONS_CACHE.find((s) => s.code === data.split("_")[1]);
+        if (!to) {
+          clearState(chatId);
+          return;
+        }
 
         setState(chatId, {
           ...state,
@@ -335,13 +414,17 @@ export const startTelegramBot = () => {
         await bot.sendMessage(
           chatId,
           MSG.selectSeatClass,
-          seatButtons(SEATS_CACHE)
+          seatButtons(SEATS_CACHE),
         );
       }
-      if (data.startsWith("seat_") && state.step == "seat") {
-        const seat = SEATS_CACHE.find((s) => s._id == data.split("_")[1]);
 
-        if (!seat) return clearState(chatId);
+      if (data.startsWith("seat_") && state.step === "seat") {
+        const seat = SEATS_CACHE.find((s) => s._id === data.split("_")[1]);
+
+        if (!seat) {
+          clearState(chatId);
+          return;
+        }
 
         setState(chatId, {
           ...state,
@@ -357,26 +440,29 @@ export const startTelegramBot = () => {
 
         await bot.sendMessage(chatId, MSG.enterDate);
       }
-      if (data == "stop_all") {
+
+      if (data === "stop_all") {
         for (const search of state.searches) {
           try {
             await stopSearch(search._id);
-            await stopChecker(search._id);
+            await stopApiChecker(search._id);
           } catch (e) {
-            console.error("Stop error:", search._id, e);
+            console.error("[stop_all] Error:", search._id, e);
           }
         }
 
         clearState(chatId);
 
-        await bot.editMessageText("🛑 Tüm aktif aramalar durduruldu.", {
+        await bot.editMessageText(MSG.allSearchStopped, {
           chat_id: chatId,
           message_id: query.message.message_id,
         });
 
         await bot.answerCallbackQuery(query.id);
         return;
-      } else if (data == "cancel") {
+      }
+
+      if (data === "cancel") {
         clearState(chatId);
 
         await bot.editMessageText(MSG.searchesContinue, {
@@ -387,9 +473,12 @@ export const startTelegramBot = () => {
         await bot.answerCallbackQuery(query.id);
         return;
       }
+
       if (data.startsWith("stop_")) {
         const searchId = data.replace("stop_", "");
-        const search = state.searches.find((s) => s._id.toString() == searchId);
+        const search = state.searches.find(
+          (s) => s._id.toString() === searchId,
+        );
 
         if (!search) {
           clearState(chatId);
@@ -397,11 +486,11 @@ export const startTelegramBot = () => {
         }
 
         await stopSearch(searchId);
-        await stopChecker(searchId);
+        await stopApiChecker(searchId);
         clearState(chatId);
 
         const stationMap = new Map(
-          STATIONS_CACHE.map((st) => [st.code, st.name])
+          STATIONS_CACHE.map((st) => [st.code, st.name]),
         );
 
         const fromName = stationMap.get(search.fromStationCode);
@@ -411,16 +500,18 @@ export const startTelegramBot = () => {
         await bot.editMessageText(
           `🛑 Arama durduruldu:\n\n` +
             `🚉 ${fromName} → ${toName}\n` +
-            `📅 Tarih: ${search.travelDate}\n` +
-            `⏰ Saatler: ${times}`,
+            `📅 ${search.travelDate}\n` +
+            `⏱️ ${times}`,
           {
             chat_id: chatId,
             message_id: query.message.message_id,
-          }
+          },
         );
       }
+
+      await bot.answerCallbackQuery(query.id);
     } catch (err) {
-      console.error(err);
+      console.error("[callback_query] Error:", err);
       bot.sendMessage(chatId, MSG.anErrorOccurred);
     }
   });
@@ -429,20 +520,42 @@ export const startTelegramBot = () => {
   //#region MESSAGE HANDLER
   bot.on("message", async (msg) => {
     const chatId = msg.chat.id;
-    const text = msg.text ? msg.text.trim() : "";
+    const text = msg.text;
+
+    if (!text) {
+      await bot.sendMessage(chatId, MSG.onlyTextCommands);
+      return;
+    }
+
+    const isCommand = text.startsWith("/");
+    const isAllowedCommand = ALLOWED_COMMANDS.some((cmd) =>
+      text.startsWith(cmd),
+    );
+
     const state = getState(chatId);
+    if (!state && !isAllowedCommand) {
+      await bot.sendMessage(chatId, MSG.invalidMessage);
+      return;
+    }
 
-    if (!state || text.startsWith("/")) return;
+    if (!state && isAllowedCommand) {
+      return;
+    }
 
-    if (["iptal", "vazgeç", "çık"].includes(text.toLowerCase())) {
-      clearState(chatId);
-      return bot.sendMessage(chatId, MSG.transactionHasCancelled);
+    if (state && isCommand) {
+      await bot.sendMessage(
+        chatId,
+        "⚠️ Devam eden bir işlem var.\n\n" +
+          "İşlemi iptal etmek için /durdur yazabilirsiniz.",
+      );
+      return;
     }
 
     try {
-      if (state.step == "date") {
-        if (!/^\d{2} \d{2} \d{4}$/.test(text))
+      if (state.step === "date") {
+        if (!/^\d{2} \d{2} \d{4}$/.test(text)) {
           return bot.sendMessage(chatId, MSG.invalidDate);
+        }
 
         const [day, month, year] = text.split(" ").map(Number);
         const inputDate = new Date(year, month - 1, day);
@@ -451,14 +564,16 @@ export const startTelegramBot = () => {
           inputDate.getFullYear() !== year ||
           inputDate.getMonth() !== month - 1 ||
           inputDate.getDate() !== day
-        )
+        ) {
           return await bot.sendMessage(chatId, MSG.enteredAnInvalidDate);
+        }
 
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        if (inputDate < today)
+        if (inputDate < today) {
           return await bot.sendMessage(chatId, MSG.notPastDate);
+        }
 
         const currentYear = today.getFullYear();
         const currentMonth = today.getMonth();
@@ -466,13 +581,17 @@ export const startTelegramBot = () => {
         const maxDate = new Date(currentYear, currentMonth + 2, 0);
         maxDate.setHours(23, 59, 59, 999);
 
-        if (inputDate > maxDate)
+        if (inputDate > maxDate) {
           return await bot.sendMessage(chatId, MSG.selectMaxDate);
+        }
 
         await bot.sendMessage(chatId, MSG.tripAreListed);
 
-        const user = await findOrCreateUser(state.telegramId);
-        const list = await getTripList(user._id, state.from, state.to, text);
+        const list = await preview({
+          fromStationId: state.from,
+          toStationId: state.to,
+          departureDate: text,
+        });
 
         if (!list.length) {
           clearState(chatId);
@@ -486,13 +605,17 @@ export const startTelegramBot = () => {
           step: "trip",
         });
 
+        const stationMap = new Map(STATIONS_CACHE.map((s) => [s.code, s.name]));
+
         let msgText = "📅 Sefer Listesi:\n\n";
-        list.forEach((e, i) => (msgText += formatTripistItem(e, i) + "\n"));
+        list.forEach(
+          (e, i) => (msgText += formatTripistItem(e, i, stationMap) + "\n"),
+        );
         msgText += "\nSefer numaralarını yazınız (örn: 1,3)";
         return bot.sendMessage(chatId, msgText);
       }
 
-      if (state.step == "trip") {
+      if (state.step === "trip") {
         const selections = text
           .split(",")
           .map((s) => s.trim())
@@ -511,14 +634,14 @@ export const startTelegramBot = () => {
         }
 
         const invalidSelections = selections.filter(
-          (n) => Number.isNaN(n) || n < 1 || n > state.tripList.length
+          (n) => Number.isNaN(n) || n < 1 || n > state.tripList.length,
         );
 
         if (invalidSelections.length > 0) {
           const max = state.tripList.length;
 
           const rangeText =
-            max == 1
+            max === 1
               ? `Sadece 1 numaralı seferi seçebilirsiniz.`
               : `Lütfen 1 - ${max} arası değer giriniz.`;
 
@@ -526,15 +649,18 @@ export const startTelegramBot = () => {
             chatId,
             `⚠️ Geçersiz sefer numarası.\n` +
               `${rangeText}\n\n` +
-              `Örnek: ${max == 1 ? "1" : "1,3"}`
+              `Örnek: ${max === 1 ? "1" : "1,3"}`,
           );
           return;
         }
 
-        const selectedTrips = selections.map((idx) => ({
-          tripId: state.tripList[idx - 1].tripId,
-          departureTime: state.tripList[idx - 1].departureTime,
-        }));
+        const selectedTrips = selections.map((idx) => {
+          const trip = state.tripList[idx - 1];
+          return {
+            trainId: trip.trainId,
+            departureTime: trip.departure,
+          };
+        });
 
         setState(chatId, {
           ...state,
@@ -544,116 +670,102 @@ export const startTelegramBot = () => {
         const finished = await startSearchProcess(
           bot,
           chatId,
-          getState(chatId)
+          getState(chatId),
         );
 
         if (finished) clearState(chatId);
       }
     } catch (err) {
-      console.error(err);
+      console.error("[message] Error:", err);
       await bot.sendMessage(chatId, MSG.anErrorOccurred);
       clearState(chatId);
     }
   });
   //#endregion
+
   return bot;
 };
 //#endregion
 
 //#region StartSearchProcess
 async function startSearchProcess(bot, chatId, state) {
-  const fromName = state.fromName;
-  const toName = state.toName;
-  const travelDate = state.date;
   try {
     const user = await findOrCreateUser(state.telegramId);
+    const seatName = SEATS_CACHE.find((s) => s._id === state.seatId)?.name;
 
-    let search;
-    try {
-      search = await createSearch({
-        userId: user._id,
-        fromStationCode: state.from,
-        toStationCode: state.to,
-        seatType: state.seatId,
-        travelDate: state.date,
-        tripList: state.selectedTrips,
-      });
-    } catch (err) {
-      if (err.status == 409) {
-        await bot.sendMessage(chatId, `⚠️ ${err.message}.`);
-        await bot.sendMessage(chatId, MSG.pleaseReEnter);
+    const stockCheck = await checkTripAvailability({
+      fromStationId: state.from,
+      toStationId: state.to,
+      travelDate: state.date,
+      seatClass: seatName,
+      selectedTrips: state.selectedTrips,
+    });
 
-        setState(chatId, {
-          ...state,
-          selectedTrips: [],
-          step: "trip",
-        });
-
-        return false;
-      }
-
-      await bot.sendMessage(chatId, MSG.notSearchSave);
+    if (!stockCheck.allFull) {
+      await bot.sendMessage(chatId, "🎉 Zaten boş koltuk var!");
       return true;
+    } else {
+      await bot.sendMessage(
+        chatId,
+        `🚀 Arama başlatıldı!\n\n` +
+          `🚂 ${state.selectedTrips.length} sefer izleniyor\n` +
+          `⏱️ Yer bulunca size buradan haber verilecektir.`,
+      );
     }
 
-    if (!search || !search._id) {
-      await bot.sendMessage(chatId, MSG.notSearchSave);
-      return true;
-    }
+    const search = await createSearch({
+      userId: user._id,
+      fromStationCode: state.from,
+      toStationCode: state.to,
+      seatType: state.seatId,
+      travelDate: state.date,
+      tripList: state.selectedTrips,
+    });
 
-    await bot.sendMessage(
-      chatId,
-      `🚀 Arama başlatıldı!\n\n` +
-        `🚂 ${state.selectedTrips.length} sefer izleniyor\n` +
-        `⏱️ Yer bulunca size buradan haber verilecektir.`
-    );
-
-    startMultiTripChecker(
-      user._id,
-      search._id,
-      state.from,
-      state.to,
-      state.date,
-      state.seatClass,
-      state.selectedTrips,
-      {
-        onFound: async (trip, searchId) => {
+    startApiTripChecker({
+      searchId: search._id,
+      fromStationId: search.fromStationCode,
+      toStationId: search.toStationCode,
+      travelDate: search.travelDate,
+      seatClass: seatName,
+      selectedTrips: search.tripList,
+      callbacks: {
+        onFound: async (trip) => {
+          await foundSearch(search._id);
           await bot.sendMessage(
             chatId,
             `🎉 YER BULUNDU!\n\n` +
-              `🚉 ${fromName} → ${toName}\n\n` +
-              `📅 Tarih: ${travelDate}\n` +
-              `⏱️ Saat: ${trip.departureTime}\n` +
-              `🔗 https://ebilet.tcddtasimacilik.gov.tr/`
+              `🚉 ${state.fromName} → ${state.toName}\n` +
+              `📅 ${formatTripDate(trip.date)}\n` +
+              `⏱️ ${trip.departure}\n` +
+              `💺 ${seatName}\n` +
+              `🔗 https://ebilet.tcddtasimacilik.gov.tr/`,
           );
-          await foundSearch(searchId);
         },
-        onCheck: async () => {
-          await bot.sendMessage(chatId, MSG.tripIsFull);
-        },
-        onTripExpired: async (trip) => {
-          await bot.sendMessage(
-            chatId,
-            `⏰ ${trip.departureTime} seferinin süresi geçti.`
-          );
-          await refreshSearchTripList(search._id);
-        },
-        onAllExpired: async () => {
+        onExpired: async (expiredTrips) => {
+          await stopSearch(search._id);
           await bot.sendMessage(chatId, MSG.isTripExpired);
-          await stopExpiredSearches();
+        },
+        onExpiredNotified: async (expiredTrips) => {
+          await stopSearch(search._id);
+          await bot.sendMessage(chatId, MSG.isTripExpired);
         },
         onError: async (err) => {
-          console.error(err);
-          await bot.sendMessage(chatId, MSG.errorOccurred);
           await stopErrorSearch(search._id);
         },
-      }
-    );
+      },
+    });
+
+    return true;
   } catch (err) {
-    console.error("startSearchProcess error:", err);
-    await bot.sendMessage(chatId, MSG.searchFailed);
+    if (err?.status === 409 || err?.response?.status === 409) {
+      await bot.sendMessage(chatId, MSG.hasActiveSearch);
+      return true;
+    }
+
+    await bot.sendMessage(chatId, MSG.anErrorOccurred);
+    console.error("[startSearchProcess] Error:", err);
     return true;
   }
-  return true;
 }
 //#endregion

@@ -55,6 +55,23 @@ export const createSearch = async ({
   }
 };
 
+export const preview = async ({
+  fromStationId,
+  toStationId,
+  departureDate,
+}) => {
+  try {
+    const res = await axios.post(`${API_URL}${basePath}/preview`, {
+      fromStationId,
+      toStationId,
+      departureDate,
+    });
+    return res.data;
+  } catch (err) {
+    throw err;
+  }
+};
+
 export const foundSearch = async (id) => {
   try {
     const res = await axios.post(`${API_URL}${basePath}/foundSearch`, { id });
