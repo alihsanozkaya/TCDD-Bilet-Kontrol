@@ -1,4 +1,4 @@
-import { preview, refreshSearchTripList } from "../services/searchService.js";
+import { preview, stopDatePassedSearch } from "../services/searchService.js";
 
 const runningCheckers = new Map();
 
@@ -11,13 +11,14 @@ async function checkOnce({
   selectedTrips,
   callbacks = {},
 }) {
-  await refreshSearchTripList(searchId);
+  const expiredTrips = selectedTrips.filter((trip) =>
+    isExpired(trip, travelDate),
+  );
 
-  const { active, expired } = splitExpiredTrips(selectedTrips, travelDate);
-
-  if (active.length === 0) {
-    callbacks.onExpiredNotified?.(expired);
-    return { found: null, allExpired: true, expiredTrips: expired };
+  if (expiredTrips.length === selectedTrips.length) {
+    await stopDatePassedSearch(searchId);
+    callbacks.onExpired?.(expiredTrips);
+    return { found: null, allExpired: true, expiredTrips };
   }
 
   const trips = await preview({
@@ -26,14 +27,12 @@ async function checkOnce({
     departureDate: travelDate,
   });
 
-  for (const activeTrip of active) {
+  for (const activeTrip of selectedTrips) {
     const trip = trips.find(
       (t) => Number(t.trainId) === Number(activeTrip.trainId),
     );
 
-    if (!trip) {
-      continue;
-    }
+    if (!trip) continue;
 
     const stock = seatClass === "EKONOMİ" ? trip.economy : trip.business;
 
@@ -42,7 +41,7 @@ async function checkOnce({
     }
   }
 
-  return { found: null, allExpired: false, expiredTrips: expired };
+  return { found: null, allExpired: false };
 }
 
 export async function startApiTripChecker({
@@ -52,34 +51,10 @@ export async function startApiTripChecker({
   travelDate,
   seatClass,
   selectedTrips,
-  intervalMs = 30000,
+  intervalMs = 10000,
   callbacks = {},
 }) {
   if (runningCheckers.has(searchId)) return;
-
-  try {
-    const result = await checkOnce({
-      searchId,
-      fromStationId,
-      toStationId,
-      travelDate,
-      seatClass,
-      selectedTrips,
-      callbacks,
-    });
-
-    if (result.found) {
-      callbacks.onFound?.(result.found);
-      return;
-    }
-
-    if (result.allExpired) {
-      callbacks.onExpired?.(result.expiredTrips);
-      return;
-    }
-  } catch (err) {
-    console.error("[API INITIAL CHECK ERROR]", searchId, err);
-  }
 
   const timer = setInterval(async () => {
     try {
@@ -96,17 +71,12 @@ export async function startApiTripChecker({
       if (result.found) {
         clearInterval(timer);
         runningCheckers.delete(searchId);
-
         callbacks.onFound?.(result.found);
-        return;
       }
 
       if (result.allExpired) {
         clearInterval(timer);
         runningCheckers.delete(searchId);
-
-        callbacks.onExpired?.(result.expiredTrips);
-        return;
       }
     } catch (err) {
       console.error("[API CHECK ERROR]", searchId, err);
@@ -114,18 +84,14 @@ export async function startApiTripChecker({
       const errorCount = (runningCheckers.get(searchId)?.errorCount || 0) + 1;
 
       if (errorCount >= 3) {
-        console.error("[API CHECK STOPPED - TOO MANY ERRORS]", searchId);
         clearInterval(timer);
         runningCheckers.delete(searchId);
         callbacks.onError?.(err);
       } else {
-        const checkerData = runningCheckers.get(searchId);
-        if (checkerData) {
-          runningCheckers.set(searchId, {
-            ...checkerData,
-            errorCount,
-          });
-        }
+        runningCheckers.set(searchId, {
+          ...runningCheckers.get(searchId),
+          errorCount,
+        });
       }
     }
   }, intervalMs);
@@ -146,30 +112,12 @@ export function stopApiChecker(searchId) {
   return true;
 }
 
-function splitExpiredTrips(trips, travelDate) {
-  const now = new Date();
-
-  const active = [];
-  const expired = [];
-
-  for (const trip of trips) {
-    const depTime = buildTripDate(travelDate, trip.departureTime);
-
-    if (isNaN(depTime)) {
-      console.warn("[TRIP DATE INVALID]", trip);
-      expired.push(trip);
-      continue;
-    }
-
-    if (depTime <= now) expired.push(trip);
-    else active.push(trip);
-  }
-
-  return { active, expired };
-}
-
-function buildTripDate(travelDate, timeHHMM) {
+function isExpired(trip, travelDate) {
   const [day, month, year] = travelDate.split(" ").map(Number);
-  const [hour, minute] = timeHHMM.split(":").map(Number);
-  return new Date(year, month - 1, day, hour, minute);
+  const [hour, minute] = trip.departureTime.split(":").map(Number);
+
+  const tripDate = new Date(year, month - 1, day, hour, minute);
+  const diffMs = tripDate.getTime() - Date.now();
+
+  return diffMs <= 15 * 60 * 1000;
 }

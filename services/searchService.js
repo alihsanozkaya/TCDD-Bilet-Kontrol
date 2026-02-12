@@ -104,19 +104,9 @@ export const stopErrorSearch = async (id) => {
   }
 };
 
-export const stopExpiredSearches = async () => {
+export const stopDatePassedSearch = async (id) => {
   try {
-    const res = await axios.post(`${API_URL}${basePath}/stopExpired`);
-    return res.data;
-  } catch (err) {
-    console.error(err.message);
-    return null;
-  }
-};
-
-export const refreshSearchTripList = async (id) => {
-  try {
-    const res = await axios.post(`${API_URL}${basePath}/refreshSearchTrips`, {
+    const res = await axios.post(`${API_URL}${basePath}/stopDatePassed`, {
       id,
     });
     return res.data;

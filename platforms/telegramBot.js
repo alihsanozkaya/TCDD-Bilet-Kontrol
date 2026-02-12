@@ -2,7 +2,6 @@ import {
   getActiveSearchesByUser,
   createSearch,
   stopSearch,
-  stopExpiredSearches,
   stopErrorSearch,
   getAllActiveSearches,
   foundSearch,
@@ -145,8 +144,6 @@ export const startTelegramBot = () => {
   //#region RECOVERY LOGIC
   (async () => {
     try {
-      await stopExpiredSearches();
-
       const activeSearches = await getAllActiveSearches();
 
       STATIONS_CACHE = await getAllStations();
@@ -188,12 +185,16 @@ export const startTelegramBot = () => {
               );
             },
             onExpired: async (expiredTrips) => {
-              await stopSearch(search._id);
-              await bot.sendMessage(chatId, MSG.isTripExpired);
-            },
-            onExpiredNotified: async (expiredTrips) => {
-              await stopSearch(search._id);
-              await bot.sendMessage(chatId, MSG.isTripExpired);
+              if (!expiredTrips?.length) return;
+              let msg = "⚠️ Sefer süresi geçti:\n\n";
+              expiredTrips.forEach((t) => {
+                msg +=
+                  `🚉 ${fromName} → ${toName}\n` +
+                  `📅 ${search.travelDate}\n` +
+                  `⏱️ ${t.departureTime}\n\n`;
+              });
+              msg += "Arama durduruldu.";
+              await bot.sendMessage(chatId, msg);
             },
             onError: async (err) => {
               await stopErrorSearch(search._id);
@@ -205,17 +206,6 @@ export const startTelegramBot = () => {
       console.error("[RECOVERY ERROR]", err);
     }
   })();
-
-  setInterval(
-    async () => {
-      try {
-        await stopExpiredSearches();
-      } catch (err) {
-        console.error("[CLEANUP ERROR]", err);
-      }
-    },
-    15 * 60 * 1000,
-  );
   //#endregion
 
   //#region /start
@@ -542,15 +532,6 @@ export const startTelegramBot = () => {
       return;
     }
 
-    if (state && isCommand) {
-      await bot.sendMessage(
-        chatId,
-        "⚠️ Devam eden bir işlem var.\n\n" +
-          "İşlemi iptal etmek için /durdur yazabilirsiniz.",
-      );
-      return;
-    }
-
     try {
       if (state.step === "date") {
         if (!/^\d{2} \d{2} \d{4}$/.test(text)) {
@@ -704,23 +685,32 @@ async function startSearchProcess(bot, chatId, state) {
     if (!stockCheck.allFull) {
       await bot.sendMessage(chatId, "🎉 Zaten boş koltuk var!");
       return true;
-    } else {
-      await bot.sendMessage(
-        chatId,
-        `🚀 Arama başlatıldı!\n\n` +
-          `🚂 ${state.selectedTrips.length} sefer izleniyor\n` +
-          `⏱️ Yer bulunca size buradan haber verilecektir.`,
-      );
     }
 
-    const search = await createSearch({
-      userId: user._id,
-      fromStationCode: state.from,
-      toStationCode: state.to,
-      seatType: state.seatId,
-      travelDate: state.date,
-      tripList: state.selectedTrips,
-    });
+    let search;
+    try {
+      search = await createSearch({
+        userId: user._id,
+        fromStationCode: state.from,
+        toStationCode: state.to,
+        seatType: state.seatId,
+        travelDate: state.date,
+        tripList: state.selectedTrips,
+      });
+    } catch (err) {
+      if (err?.status === 409 || err?.response?.status === 409) {
+        await bot.sendMessage(chatId, MSG.hasActiveSearch);
+        return true;
+      }
+      throw err;
+    }
+
+    await bot.sendMessage(
+      chatId,
+      `🚀 Arama başlatıldı!\n\n` +
+        `🚂 ${state.selectedTrips.length} sefer izleniyor\n` +
+        `⏱️ Yer bulunca size buradan haber verilecektir.`,
+    );
 
     startApiTripChecker({
       searchId: search._id,
@@ -743,12 +733,16 @@ async function startSearchProcess(bot, chatId, state) {
           );
         },
         onExpired: async (expiredTrips) => {
-          await stopSearch(search._id);
-          await bot.sendMessage(chatId, MSG.isTripExpired);
-        },
-        onExpiredNotified: async (expiredTrips) => {
-          await stopSearch(search._id);
-          await bot.sendMessage(chatId, MSG.isTripExpired);
+          if (!expiredTrips?.length) return;
+          let msg = "⚠️ Sefer süresi geçti:\n\n";
+          expiredTrips.forEach((t) => {
+            msg +=
+              `🚉 ${state.fromName} → ${state.toName}\n` +
+              `📅 ${search.travelDate}\n` +
+              `⏱️ ${t.departureTime}\n\n`;
+          });
+          msg += "Arama durduruldu.";
+          await bot.sendMessage(chatId, msg);
         },
         onError: async (err) => {
           await stopErrorSearch(search._id);
@@ -758,11 +752,6 @@ async function startSearchProcess(bot, chatId, state) {
 
     return true;
   } catch (err) {
-    if (err?.status === 409 || err?.response?.status === 409) {
-      await bot.sendMessage(chatId, MSG.hasActiveSearch);
-      return true;
-    }
-
     await bot.sendMessage(chatId, MSG.anErrorOccurred);
     console.error("[startSearchProcess] Error:", err);
     return true;
