@@ -51,7 +51,7 @@ export async function startApiTripChecker({
   travelDate,
   seatClass,
   selectedTrips,
-  intervalMs = 10000,
+  intervalMs = 45000,
   callbacks = {},
 }) {
   if (runningCheckers.has(searchId)) return;

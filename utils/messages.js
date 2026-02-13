@@ -70,4 +70,4 @@ export const transactionHasCancelled = "❌ İşlem iptal edildi.";
 export const transactionHasExpired = "❗ İşlem süresi doldu!";
 export const tripAreListed = "🔍 Seferler listeleniyor, lütfen bekleyiniz...";
 export const tripIsFull =
-  "❌ Seçili seferler şu anda dolu. Her 30 saniyede bir kontrol ediliyor...";
+  "❌ Seçili seferler şu anda dolu. Her 45 saniyede bir kontrol ediliyor...";
