@@ -116,8 +116,11 @@ function isExpired(trip, travelDate) {
   const [day, month, year] = travelDate.split(" ").map(Number);
   const [hour, minute] = trip.departureTime.split(":").map(Number);
 
-  const tripDate = new Date(year, month - 1, day, hour, minute);
-  const diffMs = tripDate.getTime() - Date.now();
+  const tripUtcMs = Date.UTC(year, month - 1, day, hour - 3, minute, 0, 0);
+
+  const nowUtcMs = Date.now();
+
+  const diffMs = tripUtcMs - nowUtcMs;
 
   return diffMs <= 15 * 60 * 1000;
 }
