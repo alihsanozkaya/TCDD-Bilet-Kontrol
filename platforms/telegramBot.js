@@ -15,7 +15,11 @@ import * as MSG from "../utils/messages.js";
 import TelegramBot from "node-telegram-bot-api";
 import { getAllSteats } from "../services/seatService.js";
 import { getAllStations } from "../services/stationService.js";
-import { startApiTripChecker, stopApiChecker } from "../core/apiTripChecker.js";
+import {
+  startApiTripChecker,
+  stopApiChecker,
+  isEconomyClass,
+} from "../core/apiTripChecker.js";
 import {
   formatActiveSearches,
   formatTripDate,
@@ -107,8 +111,11 @@ const checkTripAvailability = async ({
         continue;
       }
 
-      const hasStock =
-        seatClass === "EKONOMİ" ? trip.economy > 0 : trip.business > 0;
+      // checker ile aynı kural kullanılır, aksi halde ön kontrol ile
+      // izleme farklı koltuk sınıfına bakabilir.
+      const hasStock = isEconomyClass(seatClass)
+        ? trip.economy > 0
+        : trip.business > 0;
 
       if (hasStock) {
         availableTrips.push({ ...selected, stockInfo: trip });
@@ -141,13 +148,23 @@ export const startTelegramBot = () => {
     },
   });
 
+  bot.on("polling_error", (err) =>
+    console.error("[POLLING ERROR]", err?.message || err),
+  );
+
+  bot.on("error", (err) => console.error("[BOT ERROR]", err?.message || err));
+
   //#region RECOVERY LOGIC
   (async () => {
     try {
-      const activeSearches = await getAllActiveSearches();
-
       STATIONS_CACHE = await getAllStations();
       SEATS_CACHE = await getAllSteats();
+
+      if (!STATIONS_CACHE.length || !SEATS_CACHE.length) {
+        console.error("[RECOVERY] İstasyon/koltuk listesi boş geldi");
+      }
+
+      const activeSearches = await getAllActiveSearches();
 
       const stationMap = new Map(STATIONS_CACHE.map((s) => [s.code, s.name]));
       const seatMap = new Map(SEATS_CACHE.map((s) => [s._id, s.name]));
@@ -155,8 +172,15 @@ export const startTelegramBot = () => {
       for (const search of activeSearches) {
         const chatId = await getChatIdByUserId(search.userId);
 
-        const fromName = stationMap.get(search.fromStationCode);
-        const toName = stationMap.get(search.toStationCode);
+        if (!chatId) {
+          console.error("[RECOVERY] chatId bulunamadı:", search._id);
+          continue;
+        }
+
+        const fromName =
+          stationMap.get(search.fromStationCode) ?? search.fromStationCode;
+        const toName =
+          stationMap.get(search.toStationCode) ?? search.toStationCode;
         const seatName = seatMap.get(search.seatType);
 
         if (!seatName) {
@@ -226,7 +250,7 @@ export const startTelegramBot = () => {
     const chatId = msg.chat.id;
     const telegramId = msg.from.id;
     try {
-      if (!STATIONS_CACHE || !SEATS_CACHE) {
+      if (!STATIONS_CACHE?.length || !SEATS_CACHE?.length) {
         return bot.sendMessage(msg.chat.id, MSG.startSystem);
       }
 
@@ -260,6 +284,10 @@ export const startTelegramBot = () => {
   bot.onText(/\/listele/, async (msg) => {
     const chatId = msg.chat.id;
     try {
+      if (!STATIONS_CACHE?.length || !SEATS_CACHE?.length) {
+        return bot.sendMessage(chatId, MSG.startSystem);
+      }
+
       const user = await findOrCreateUser(msg.from.id);
       const searches = await getActiveSearchesByUser(user._id);
 
@@ -283,6 +311,10 @@ export const startTelegramBot = () => {
     const chatId = msg.chat.id;
 
     try {
+      if (!STATIONS_CACHE?.length) {
+        return bot.sendMessage(chatId, MSG.startSystem);
+      }
+
       const user = await findOrCreateUser(msg.from.id);
       const searches = await getActiveSearchesByUser(user._id);
 
@@ -434,10 +466,10 @@ export const startTelegramBot = () => {
       if (data === "stop_all") {
         for (const search of state.searches) {
           try {
+            stopApiChecker(search._id);
             await stopSearch(search._id);
-            await stopApiChecker(search._id);
           } catch (e) {
-            console.error("[stop_all] Error:", search._id, e);
+            console.error("[stop_all] Error:", search._id, e?.message || e);
           }
         }
 
@@ -475,8 +507,8 @@ export const startTelegramBot = () => {
           return bot.sendMessage(chatId, MSG.searchNotFound);
         }
 
+        stopApiChecker(searchId);
         await stopSearch(searchId);
-        await stopApiChecker(searchId);
         clearState(chatId);
 
         const stationMap = new Map(
@@ -672,7 +704,16 @@ export const startTelegramBot = () => {
 async function startSearchProcess(bot, chatId, state) {
   try {
     const user = await findOrCreateUser(state.telegramId);
-    const seatName = SEATS_CACHE.find((s) => s._id === state.seatId)?.name;
+    if (!user?._id) {
+      await bot.sendMessage(chatId, MSG.anErrorOccurred);
+      return true;
+    }
+
+    const seatName = SEATS_CACHE?.find((s) => s._id === state.seatId)?.name;
+    if (!seatName) {
+      await bot.sendMessage(chatId, MSG.anErrorOccurred);
+      return true;
+    }
 
     const stockCheck = await checkTripAvailability({
       fromStationId: state.from,

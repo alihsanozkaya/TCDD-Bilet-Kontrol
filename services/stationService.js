@@ -5,12 +5,17 @@ dotenv.config();
 const API_URL = process.env.API_URL;
 const basePath = "/stations";
 
+const http = axios.create({
+  baseURL: `${API_URL}${basePath}`,
+  timeout: 15000,
+});
+
 export const getAllStations = async () => {
   try {
-    const res = await axios.get(`${API_URL}${basePath}`);
-    return res.data || [];
+    const res = await http.get("");
+    return Array.isArray(res.data) ? res.data : [];
   } catch (err) {
-    console.error(err.message);
+    console.error("[getAllStations]", err.message);
     return [];
   }
 };

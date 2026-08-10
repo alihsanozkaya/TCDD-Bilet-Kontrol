@@ -5,22 +5,62 @@ dotenv.config();
 const API_URL = process.env.API_URL;
 const basePath = "/searches";
 
+const REQUEST_TIMEOUT_MS = 30000;
+
+if (!API_URL) {
+  console.error("[searchService] API_URL tanımlı değil (.env kontrol edin)");
+}
+
+const http = axios.create({
+  baseURL: `${API_URL}${basePath}`,
+  timeout: REQUEST_TIMEOUT_MS,
+});
+
+/**
+ * Axios hatasını sade bir Error'a çevirir.
+ * - status        : API'nin döndürdüğü HTTP kodu (yanıt geldiyse)
+ * - code          : ECONNABORTED / ETIMEDOUT gibi ağ hata kodu
+ * - isNetworkError: yanıt hiç gelmediyse true (timeout, bağlantı hatası)
+ * Böylece checker geçici hata ile kalıcı hatayı ayırt edebiliyor ve
+ * loglara devasa axios nesnesi basılmıyor.
+ */
+const normalizeError = (err) => {
+  if (!err?.isAxiosError) return err;
+
+  const status = err.response?.status;
+  const message =
+    err.response?.data?.message || err.message || "İstek başarısız oldu";
+
+  const normalized = new Error(message);
+  normalized.status = status;
+  normalized.code = err.code;
+  normalized.isNetworkError = !err.response;
+
+  return normalized;
+};
+
+const logError = (label, err) => {
+  const normalized = normalizeError(err);
+  const status = normalized.status ? `HTTP ${normalized.status} - ` : "";
+  console.error(`[${label}] ${status}${normalized.message}`);
+};
+
 export const getAllActiveSearches = async () => {
   try {
-    const res = await axios.get(`${API_URL}${basePath}`);
-    return res.data;
+    const res = await http.get("");
+    return Array.isArray(res.data) ? res.data : [];
   } catch (err) {
-    console.error(err.message);
+    logError("getAllActiveSearches", err);
     return [];
   }
 };
 
 export const getActiveSearchesByUser = async (userId) => {
   try {
-    const res = await axios.get(`${API_URL}${basePath}/user/${userId}`);
-    return res.data;
+    const res = await http.get(`/user/${userId}`);
+    return Array.isArray(res.data) ? res.data : [];
   } catch (err) {
-    console.error(err.message);
+    logError("getActiveSearchesByUser", err);
     return [];
   }
 };
@@ -34,7 +74,7 @@ export const createSearch = async ({
   tripList,
 }) => {
   try {
-    const res = await axios.post(`${API_URL}${basePath}`, {
+    const res = await http.post("", {
       userId,
       fromStationCode,
       toStationCode,
@@ -44,14 +84,8 @@ export const createSearch = async ({
     });
     return res.data;
   } catch (err) {
-    if (err.response) {
-      const status = err.response.status;
-      const message = err.response.data?.message;
-      const error = new Error(message);
-      error.status = status;
-      throw error;
-    }
-    throw err;
+    // telegramBot 409'u err.status üzerinden yakalıyor.
+    throw normalizeError(err);
   }
 };
 
@@ -61,57 +95,53 @@ export const preview = async ({
   departureDate,
 }) => {
   try {
-    const res = await axios.post(`${API_URL}${basePath}/preview`, {
+    const res = await http.post("/preview", {
       fromStationId,
       toStationId,
       departureDate,
     });
     return res.data;
   } catch (err) {
-    throw err;
+    throw normalizeError(err);
   }
 };
 
 export const foundSearch = async (id) => {
   try {
-    const res = await axios.post(`${API_URL}${basePath}/foundSearch`, { id });
+    const res = await http.post("/foundSearch", { id });
     return res.data;
   } catch (err) {
-    console.error(err.message);
+    logError("foundSearch", err);
     return null;
   }
 };
 
 export const stopSearch = async (id) => {
   try {
-    const res = await axios.post(`${API_URL}${basePath}/stopSearch`, { id });
+    const res = await http.post("/stopSearch", { id });
     return res.data;
   } catch (err) {
-    console.error(err.message);
+    logError("stopSearch", err);
     return null;
   }
 };
 
 export const stopErrorSearch = async (id) => {
   try {
-    const res = await axios.post(`${API_URL}${basePath}/stopErrorSearch`, {
-      id,
-    });
+    const res = await http.post("/stopErrorSearch", { id });
     return res.data;
   } catch (err) {
-    console.error(err.message);
+    logError("stopErrorSearch", err);
     return null;
   }
 };
 
 export const stopDatePassedSearch = async (id) => {
   try {
-    const res = await axios.post(`${API_URL}${basePath}/stopDatePassed`, {
-      id,
-    });
+    const res = await http.post("/stopDatePassed", { id });
     return res.data;
   } catch (err) {
-    console.error(err.message);
+    logError("stopDatePassedSearch", err);
     return null;
   }
 };
